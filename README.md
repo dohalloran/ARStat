@@ -1,4 +1,4 @@
-# ARStat v1.0.0-rc1
+# ARStat v1.0.0
 
 ARStat is a Streamlit web application and scriptable Python backend for reproducible statistical analysis and visualization of anthelmintic resistance dose-response assays.
 
