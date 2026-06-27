@@ -1,5 +1,10 @@
 # ARStat v1.0.0
 
+[![Tests](https://github.com/dohalloran/ARStat/actions/workflows/tests.yml/badge.svg)](https://github.com/dohalloran/ARStat/actions/workflows/tests.yml)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://arstat-jm7varr6fck8uajj4lgs6t.streamlit.app/)
+
+**Live app:** [https://arstat-jm7varr6fck8uajj4lgs6t.streamlit.app/](https://arstat-jm7varr6fck8uajj4lgs6t.streamlit.app/)
+
 ARStat is a Streamlit web application and scriptable Python backend for reproducible statistical analysis and visualization of anthelmintic resistance dose-response assays.
 
 ARStat supports four assay workflows:
@@ -25,6 +30,14 @@ This release includes synthetic demonstration datasets using *Ancylostoma caninu
 The bundled datasets are synthetic demonstration datasets for testing the interface and workflow. They are not primary experimental measurements and should not be cited as biological results.
 
 ## Quick start
+
+### Use the live app
+
+No installation required. Open the app directly in your browser:
+
+[https://arstat-jm7varr6fck8uajj4lgs6t.streamlit.app/](https://arstat-jm7varr6fck8uajj4lgs6t.streamlit.app/)
+
+### Run locally
 
 ```bash
 conda create -n arstat python=3.11 -y
