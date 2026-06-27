@@ -1,0 +1,9 @@
+drug,dose,group_1,group_2,odds_ratio,p_value,p_value_bonferroni,p_value_bh,p_value_adjustment_note
+thiabendazole,0.0,KGR,WMD,0.9442105263157895,0.8826939722327694,1.0,0.8826939722327694,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+thiabendazole,0.03,KGR,WMD,2.4917808219178084,0.004391056059083055,0.03512844847266444,0.005018349781809206,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+thiabendazole,0.1,KGR,WMD,2.6641146446800157,0.0006072195531225033,0.004857756424980026,0.0008096260708300044,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+thiabendazole,0.3,KGR,WMD,9.798206278026905,3.019791422427042e-23,2.4158331379416336e-22,6.039582844854084e-23,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+thiabendazole,1.0,KGR,WMD,29.938945420906567,2.1242524087856857e-65,1.6994019270285485e-64,8.497009635142743e-65,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+thiabendazole,3.0,KGR,WMD,24.75353925353925,1.216440579662721e-70,9.731524637301768e-70,9.731524637301768e-70,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+thiabendazole,10.0,KGR,WMD,11.769111570247935,2.1765422505580174e-32,1.741233800446414e-31,5.804112668154713e-32,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+thiabendazole,30.0,KGR,WMD,6.756318550309967,2.2634995324421326e-15,1.810799625953706e-14,3.6215992519074125e-15,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.

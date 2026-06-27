@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use ARStat, please cite the archived software release."
+title: "ARStat: assay-aware statistical analysis and visualization of anthelmintic resistance phenotyping assays"
+version: "1.0.0-rc1"
+date-released: "2026-06-25"
+license: MIT
+authors:
+  - family-names: "O'Halloran"
+    given-names: "Damien M."
+repository-code: "https://github.com/YOUR-USERNAME/arstat"
+abstract: "ARStat is a no-code web application and Python backend for reproducible analysis of anthelmintic resistance phenotyping assays, including egg hatch, larval development, survival/mortality, and motility workflows."

@@ -1,0 +1,9 @@
+drug,dose,group_1,group_2,statistic,p_value,p_value_bonferroni,p_value_bh,p_value_adjustment_note
+ivermectin,0.0,KGR,WMD,8.0,1.0,1.0,1.0,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+ivermectin,0.3,KGR,WMD,2.0,0.11428571428571428,0.9142857142857143,0.13061224489795917,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+ivermectin,1.0,KGR,WMD,1.0,0.05907186801551649,0.4725749441241319,0.07876249068735532,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+ivermectin,3.0,KGR,WMD,0.0,0.026518721959430728,0.21214977567544582,0.045714285714285714,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+ivermectin,10.0,KGR,WMD,0.0,0.02857142857142857,0.22857142857142856,0.045714285714285714,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+ivermectin,30.0,KGR,WMD,0.0,0.02857142857142857,0.22857142857142856,0.045714285714285714,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+ivermectin,100.0,KGR,WMD,0.0,0.02857142857142857,0.22857142857142856,0.045714285714285714,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
+ivermectin,300.0,KGR,WMD,0.0,0.02857142857142857,0.22857142857142856,0.045714285714285714,Adjusted over all finite p-values in this table; use raw p-values only as exploratory dose-level tests.
