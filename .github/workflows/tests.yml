@@ -23,7 +23,6 @@ jobs:
       - name: Run unit tests
         run: PYTHONPATH=. pytest -q
       - name: Run simulated benchmark generator
-  	run: PYTHONPATH=. python scripts/generate_simulated_benchmarks.py
+        run: PYTHONPATH=. python scripts/generate_simulated_benchmarks.py
       - name: Run bundled example workflow
-  	run: PYTHONPATH=. python scripts/run_all_examples.py
-
+        run: PYTHONPATH=. python scripts/run_all_examples.py
