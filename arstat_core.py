@@ -45,12 +45,6 @@ ASSAY_PRESETS = {
         "effect_fraction": "mortality_fraction",
         "effect_label": "Mortality / affected fraction",
     },
-    "Motility": {
-        "score_default": "motility_score",
-        "raw_fraction": "normalized_motility",
-        "effect_fraction": "motility_inhibition_fraction",
-        "effect_label": "Motility inhibition",
-    },
 }
 
 
@@ -151,52 +145,143 @@ def calculate_count_response(
     return out, warnings
 
 
-def calculate_motility_response(
+
+def prepare_normalized_xy_response(
     df: pd.DataFrame,
-    score_col: str,
-    group_cols: list[str],
     dose_col: str,
+    replicate_cols: list[str],
+    assay_name: str,
+    group_col: str | None = None,
+    drug_col: str | None = None,
+    dataset_label: str = "Dataset 1",
+    drug_label: str = "Drug",
+    unit: str = "",
+    value_scale: str = "auto",
+    response_direction: str = "raw_outcome",
 ) -> tuple[pd.DataFrame, list[str]]:
-    """Normalize motility score to the zero-dose control within each group."""
-    warnings = validate_common_columns(df, [score_col, dose_col])
-    out = coerce_numeric(df, [score_col, dose_col])
+    """Convert a wide XY replicate table into ARStat's long analysis format.
 
-    if out[[score_col, dose_col]].isna().any().any():
-        warnings.append("Some motility or dose values could not be converted to numbers and were set to missing.")
+    The input contains one X/dose column and one or more Y columns containing
+    individual replicate responses. Optional group and drug columns permit
+    several strains, isolates, genetic backgrounds, populations, or treatment
+    groups to be analyzed in the same table. ARStat calculates dose-level mean,
+    standard deviation, and sample size from the replicate values.
 
-    if (out[score_col] < 0).any():
-        warnings.append("Negative motility scores were detected. Please confirm these are valid.")
+    Parameters
+    ----------
+    group_col
+        Optional column identifying the experimental group. Values are mapped
+        internally to ARStat's backward-compatible ``strain`` field.
+    drug_col
+        Optional column identifying the drug. When omitted, ``drug_label`` is
+        applied to all rows.
+    value_scale
+        ``"auto"`` detects percentages when any finite response exceeds 1.5;
+        ``"percent"`` divides values by 100; ``"fraction"`` leaves them on
+        the 0--1 scale.
+    response_direction
+        ``"raw_outcome"`` means hatch, development, or survival decreases as dose increases. ``"effect"`` means the imported
+        values already represent inhibition, mortality, or affected response.
+    """
+    id_cols = [dose_col]
+    for optional_col in (group_col, drug_col):
+        if optional_col and optional_col not in id_cols:
+            id_cols.append(optional_col)
+    required = id_cols + list(replicate_cols)
+    warnings = validate_common_columns(df, required)
+    if not replicate_cols:
+        raise ValueError("Select at least one replicate response column.")
+    overlap = set(replicate_cols).intersection(id_cols)
+    if overlap:
+        raise ValueError(f"Columns cannot be used as both identifiers and replicates: {sorted(overlap)}")
 
-    # Build control mean by group. Usually group_cols = [strain, drug].
-    control = out.loc[out[dose_col] == 0].groupby(group_cols, dropna=False)[score_col].mean()
+    wide = df.copy()
+    wide = coerce_numeric(wide, [dose_col] + list(replicate_cols))
+    if wide[dose_col].isna().any():
+        warnings.append("Some dose values could not be converted to numbers and were removed.")
 
-    def get_control(row):
-        key = tuple(row[c] for c in group_cols)
-        try:
-            return control.loc[key]
-        except KeyError:
-            return np.nan
+    long = wide[id_cols + list(replicate_cols)].melt(
+        id_vars=id_cols,
+        value_vars=list(replicate_cols),
+        var_name="replicate",
+        value_name="imported_response",
+    )
+    before = len(long)
+    long = long.dropna(subset=[dose_col, "imported_response"]).copy()
+    removed = before - len(long)
+    if removed:
+        warnings.append(f"{removed} missing or non-numeric dose/response cells were omitted.")
+    if long.empty:
+        raise ValueError("No usable normalized replicate values were found.")
 
-    out["control_mean"] = out.apply(get_control, axis=1)
-    missing_control = out["control_mean"].isna()
-    if missing_control.any():
+    finite = long["imported_response"].to_numpy(dtype=float)
+    scale = value_scale
+    if scale == "auto":
+        scale = "percent" if np.nanmax(np.abs(finite)) > 1.5 else "fraction"
         warnings.append(
-            f"{missing_control.sum()} rows lack a matching zero-dose control; motility normalization may be incomplete."
+            f"Normalized response scale was detected as {'0-100 percent' if scale == 'percent' else '0-1 fraction'}."
         )
+    if scale == "percent":
+        long["normalized_input_fraction"] = long["imported_response"] / 100.0
+    elif scale == "fraction":
+        long["normalized_input_fraction"] = long["imported_response"]
+    else:
+        raise ValueError("value_scale must be 'auto', 'percent', or 'fraction'.")
 
-    out["normalized_motility"] = out[score_col] / out["control_mean"]
-    above_control = (out[dose_col] > 0) & (out["normalized_motility"] > 1)
-    if above_control.any():
+    outside = ~long["normalized_input_fraction"].between(0, 1)
+    if outside.any():
         warnings.append(
-            f"{int(above_control.sum())} nonzero-dose motility rows had scores above the matched zero-dose control mean; "
-            "negative inhibition was clipped to 0. Consider inspecting these rows for stimulation/hormesis."
+            f"{int(outside.sum())} normalized values fell outside 0-1 after scaling and were clipped; inspect these cells."
         )
-    out["motility_inhibition_fraction_unclipped"] = 1 - out["normalized_motility"]
-    out["motility_inhibition_fraction"] = out["motility_inhibition_fraction_unclipped"].clip(0, 1)
-    out["response_fraction"] = out["motility_inhibition_fraction"]
-    out["response_percent"] = out["response_fraction"] * 100
-    return out, warnings
+        long["normalized_input_fraction"] = long["normalized_input_fraction"].clip(0, 1)
 
+    if response_direction not in {"raw_outcome", "effect"}:
+        raise ValueError("response_direction must be 'raw_outcome' or 'effect'.")
+    if response_direction == "raw_outcome":
+        raw = long["normalized_input_fraction"]
+        effect = 1 - raw
+    else:
+        effect = long["normalized_input_fraction"]
+        raw = 1 - effect
+
+    raw_col = {
+        "Egg hatch": "hatch_fraction",
+        "Larval development": "development_fraction",
+        "Survival": "survival_fraction",
+    }[assay_name]
+    effect_col = ASSAY_PRESETS[assay_name]["effect_fraction"]
+
+    long = long.rename(columns={dose_col: "dose"})
+    if group_col:
+        long["strain"] = long[group_col].astype(str).str.strip().replace("", np.nan)
+        missing_group = long["strain"].isna()
+        if missing_group.any():
+            fallback = str(dataset_label).strip() or "Dataset 1"
+            long.loc[missing_group, "strain"] = fallback
+            warnings.append(f"{int(missing_group.sum())} rows had a missing group value and were assigned '{fallback}'.")
+    else:
+        long["strain"] = str(dataset_label).strip() or "Dataset 1"
+
+    if drug_col:
+        long["drug"] = long[drug_col].astype(str).str.strip().replace("", np.nan)
+        missing_drug = long["drug"].isna()
+        if missing_drug.any():
+            fallback_drug = str(drug_label).strip() or "Drug"
+            long.loc[missing_drug, "drug"] = fallback_drug
+            warnings.append(f"{int(missing_drug.sum())} rows had a missing drug value and were assigned '{fallback_drug}'.")
+    else:
+        long["drug"] = str(drug_label).strip() or "Drug"
+
+    long["unit"] = unit
+    long["assay"] = assay_name
+    long[raw_col] = raw.clip(0, 1)
+    long[effect_col] = effect.clip(0, 1)
+    if assay_name == "Survival":
+        long["mortality_fraction"] = effect.clip(0, 1)
+    long["response_fraction"] = effect.clip(0, 1)
+    long["response_percent"] = long["response_fraction"] * 100
+    long["raw_outcome_percent"] = long[raw_col] * 100
+    return long, warnings
 
 def four_parameter_logistic(dose: np.ndarray, bottom: float, top: float, log_ic50: float, hill: float) -> np.ndarray:
     """Increasing four-parameter logistic function on log10 dose scale.
@@ -592,7 +677,7 @@ def pairwise_continuous_tests(
     stratify_cols: Optional[list[str]] = None,
     test: str = "mannwhitney",
 ) -> pd.DataFrame:
-    """Pairwise per-dose tests for continuous responses, useful for motility scores."""
+    """Pairwise per-dose tests for continuous responses, useful for normalized replicate responses."""
     stratify_cols = stratify_cols or []
     validate_common_columns(df, [comparison_col, dose_col, response_col] + stratify_cols)
     rows = []

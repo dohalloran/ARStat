@@ -1,7 +1,7 @@
 """Generate simulated ARStat benchmark datasets with known IC50 values.
 
 This script creates synthetic assay datasets for egg hatch, larval development,
-survival/mortality, and motility workflows, then fits them using ARStat's core
+and survival/mortality workflows, then fits them using ARStat's core
 analysis functions. The output can be used in a validation/benchmark section of
 reports and documentation.
 
@@ -20,7 +20,6 @@ sys.path.insert(0, str(ROOT))
 
 from arstat_core import (  # noqa: E402
     calculate_count_response,
-    calculate_motility_response,
     calculate_resistance_ratios,
     fit_dose_response,
     four_parameter_logistic,
@@ -66,13 +65,6 @@ ASSAYS = {
         "failure_col": "alive",
         "total": 30,
     },
-    "Motility": {
-        "file": "simulated_motility.csv",
-        "assay_label": "motility",
-        "drug": "ivermectin",
-        "unit": "nM",
-        "score_col": "motility_score",
-    },
 }
 
 
@@ -116,41 +108,11 @@ def make_count_assay(assay_name, meta):
     return pd.DataFrame(rows)
 
 
-def make_motility_assay(meta):
-    rows = []
-    for group in GROUPS:
-        control_mean = 100.0
-        for dose in DOSES:
-            p_effect = np.clip(response_at_dose(dose, group), 0.001, 0.999)
-            expected_score = control_mean * (1 - p_effect)
-            for rep in range(1, REPLICATES + 1):
-                score = max(0.0, RNG.normal(expected_score, 6.0))
-                rows.append(
-                    {
-                        "experiment_id": "SIM_MOTILITY_001",
-                        "assay": meta["assay_label"],
-                        "species": "Ancylostoma_caninum",
-                        "strain": group["strain"],
-                        "expected_ic50": group["expected_ic50"],
-                        "drug": meta["drug"],
-                        "dose": dose,
-                        "unit": meta["unit"],
-                        "replicate": rep,
-                        "well": f"R{rep}_D{dose:g}",
-                        meta["score_col"]: round(score, 3),
-                    }
-                )
-    return pd.DataFrame(rows)
-
 
 def analyze_dataset(assay_name, df, meta):
     group_cols = ["strain", "drug"]
-    if assay_name == "Motility":
-        analyzed, warnings = calculate_motility_response(df, meta["score_col"], group_cols, "dose")
-        total_col = None
-    else:
-        analyzed, warnings = calculate_count_response(df, meta["success_col"], meta["failure_col"], assay_name)
-        total_col = "total_count"
+    analyzed, warnings = calculate_count_response(df, meta["success_col"], meta["failure_col"], assay_name)
+    total_col = "total_count"
 
     fit_summary, fit_results = fit_dose_response(
         analyzed,
@@ -185,10 +147,7 @@ def main():
     all_warnings = []
 
     for assay_name, meta in ASSAYS.items():
-        if assay_name == "Motility":
-            df = make_motility_assay(meta)
-        else:
-            df = make_count_assay(assay_name, meta)
+        df = make_count_assay(assay_name, meta)
 
         data_path = OUTDIR / meta["file"]
         df.to_csv(data_path, index=False)

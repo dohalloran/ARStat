@@ -1,12 +1,31 @@
 # Changelog
 
+## v1.1.1 — focused assay scope
+
+- Focused ARStat on egg hatch, larval development, and survival/mortality assays.
+- Removed the motility workflow, sample dataset, templates, benchmarks, tests, and documentation.
+
+## v1.1.0 — multi-group normalized replicate input
+
+- Added optional experimental-group and drug/compound column mapping for normalized XY replicate tables.
+- Experimental groups can represent strains, isolates, genetic backgrounds, populations, or treatment groups.
+- ARStat fits one curve per drug-by-group combination and retains reference-group fold-resistance calculations.
+- Added single-dataset and multi-group normalized replicate templates.
+- Normalized input continues to require individual replicate values; precomputed summary statistics are not accepted.
+
+## 2026-07 normalized XY replicate import
+
+- Added CSV/XLSX import for wide XY tables containing one dose column and individual replicate response columns.
+- ARStat now calculates mean, standard deviation, and n from replicate values rather than requiring imported summary statistics.
+- Added a normalized XY replicate template and vendor-neutral documentation.
+
 ## v1.0.0-rc1
 
 Release-candidate package for public software testing and validation.
 
 ### Added
 
-- Four supported assay workflows: egg hatch, larval development, survival/mortality, and motility.
+- Three supported assay workflows: egg hatch, larval development, and survival/mortality.
 - Hookworm-style synthetic example datasets using *Ancylostoma caninum* WMD/KGR and assay-appropriate drugs.
 - Simulated benchmark generator with known IC50 values.
 - Example-validation script.
@@ -25,7 +44,7 @@ Release-candidate package for public software testing and validation.
 
 ## v1.0.0-rc3 plot display update
 
-- Added a traditional raw-outcome IC50 plot display option, so hatch rate, development rate, survival, and motility can be shown as descending curves while retaining the existing inhibition/mortality-based IC50 fitting.
+- Added a traditional raw-outcome IC50 plot display option, so hatch rate, development rate, and survival can be shown as descending curves while retaining the existing inhibition/mortality-based IC50 fitting.
 - Added `survival_fraction` for survival assay display while preserving mortality/affected fraction as the fitted response.
 - Included plot-display mode in result staleness detection, so toggling plot style prompts users to rerun instead of showing stale figures.
 - Made plot captions conditional on the selected plot display mode.
@@ -35,6 +54,5 @@ Release-candidate package for public software testing and validation.
 
 - Corrected the larval development unit test so developed larvae are treated as the success count and undeveloped larvae as the failure count, matching the app presets and documentation.
 - Added test assertions that larval-development inhibition increases at high dose and that fitted top values exceed fitted bottom values for the standard example.
-- Added warnings when motility scores exceed matched zero-dose controls; negative inhibition is retained in an unclipped helper column and clipped to 0 only for the fitted response.
 - Improved fold-resistance bootstrap confidence intervals by using 10,000 ratio draws from stored IC50 bootstrap samples.
 - Added a fit message when a converged 4PL model has a fitted top below the fitted bottom, which can indicate swapped columns, incorrect assay settings, or poor data quality.

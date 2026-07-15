@@ -10,7 +10,6 @@ The included test suite checks:
 
 1. Four-parameter logistic model behavior.
 2. Count-response calculations for egg hatch, larval development, and survival/mortality assays.
-3. Motility normalization within each isolate/drug group.
 4. IC50 fitting and fold-resistance calculations.
 5. Multiple-testing correction columns.
 6. All four bundled hookworm-style example datasets.
@@ -23,7 +22,7 @@ pytest -q
 
 ## Validation layer 2: Simulated benchmark datasets with known IC50 values
 
-The script `scripts/generate_simulated_benchmarks.py` creates synthetic datasets for all four assay workflows with known IC50 values. It then runs the same ARStat core functions used by the web app and reports the fitted IC50, expected IC50, absolute error, and percent error.
+The script `scripts/generate_simulated_benchmarks.py` creates synthetic datasets for all three assay workflows with known IC50 values. It then runs the same ARStat core functions used by the web app and reports the fitted IC50, expected IC50, absolute error, and percent error.
 
 Run:
 
@@ -36,7 +35,6 @@ Outputs are written to `benchmarks/`:
 - `simulated_egg_hatch.csv`
 - `simulated_larval_development.csv`
 - `simulated_survival.csv`
-- `simulated_motility.csv`
 - `benchmark_fit_accuracy_summary.csv`
 - `benchmark_fold_resistance_summary.csv`
 
@@ -61,6 +59,5 @@ Recommended real-data case studies:
 1. Thiabendazole egg hatch assay.
 2. Ivermectin larval development assay.
 3. Ivermectin survival/mortality assay.
-4. Ivermectin motility assay, if quantitative motility data are available.
 
 If real data are not ready for public release, include synthetic demonstration data in the software repository and cite the real data as unavailable or available upon request only if journal policy permits. A public software paper is stronger if at least one real de-identified example dataset is included.

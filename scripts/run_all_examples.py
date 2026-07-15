@@ -12,10 +12,8 @@ sys.path.insert(0, str(ROOT))
 
 from arstat_core import (  # noqa: E402
     calculate_count_response,
-    calculate_motility_response,
     calculate_resistance_ratios,
     fit_dose_response,
-    pairwise_continuous_tests,
     pairwise_count_tests,
     summarize_by_dose,
 )
@@ -42,11 +40,6 @@ EXAMPLES = {
         "failure_col": "alive",
         "reference": "WMD",
     },
-    "Motility": {
-        "path": ROOT / "sample_data" / "motility_example.csv",
-        "score_col": "motility_score",
-        "reference": "WMD",
-    },
 }
 
 def main():
@@ -54,14 +47,9 @@ def main():
     for assay_name, cfg in EXAMPLES.items():
         df = pd.read_csv(cfg["path"])
         group_cols = ["strain", "drug"]
-        if assay_name == "Motility":
-            analyzed, warnings = calculate_motility_response(df, cfg["score_col"], group_cols, "dose")
-            total_col = None
-            tests = pairwise_continuous_tests(analyzed, comparison_col="strain", dose_col="dose", stratify_cols=["drug"])
-        else:
-            analyzed, warnings = calculate_count_response(df, cfg["success_col"], cfg["failure_col"], assay_name)
-            total_col = "total_count"
-            tests = pairwise_count_tests(analyzed, comparison_col="strain", dose_col="dose", stratify_cols=["drug"])
+        analyzed, warnings = calculate_count_response(df, cfg["success_col"], cfg["failure_col"], assay_name)
+        total_col = "total_count"
+        tests = pairwise_count_tests(analyzed, comparison_col="strain", dose_col="dose", stratify_cols=["drug"])
         fit_summary, fit_results = fit_dose_response(analyzed, group_cols=group_cols, total_col=total_col, n_boot=100)
         rr = calculate_resistance_ratios(fit_summary, group_col="strain", reference_group=cfg["reference"], fit_results=fit_results, group_cols=group_cols)
         dose_summary = summarize_by_dose(analyzed, group_cols=group_cols)

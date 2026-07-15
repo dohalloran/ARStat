@@ -18,12 +18,12 @@ from arstat_core import (
     ASSAY_PRESETS,
     assay_warnings,
     calculate_count_response,
-    calculate_motility_response,
     calculate_resistance_ratios,
     fit_dose_response,
     four_parameter_logistic,
     pairwise_continuous_tests,
     pairwise_count_tests,
+    prepare_normalized_xy_response,
     summarize_by_dose,
 )
 
@@ -44,9 +44,9 @@ st.caption("Reproducible statistical analysis and visualization of anthelmintic 
 with st.expander("What ARStat does", expanded=False):
     st.markdown(
         """
-        ARStat turns raw assay counts or motility scores into standardized dose-response outputs.
+        ARStat turns raw assay counts or normalized replicate responses into standardized dose-response outputs.
 
-        The bundled examples use illustrative hookworm datasets: Ancylostoma caninum WMD as the susceptible reference and KGR as a resistant isolate. Thiabendazole is used for the egg hatch example; ivermectin is used for larval development, survival/mortality, and motility examples.
+        The bundled examples use illustrative hookworm datasets: Ancylostoma caninum WMD as the susceptible reference and KGR as a resistant isolate. Thiabendazole is used for the egg hatch example; ivermectin is used for larval development and survival/mortality examples.
 
         - assay-specific response calculations
         - input validation and warnings
@@ -57,14 +57,21 @@ with st.expander("What ARStat does", expanded=False):
         - per-dose pairwise tests with multiple-testing-adjusted p-values
         - downloadable CSV tables, Excel workbooks, and publication-ready PNG figures
 
-        This first web version supports egg hatch, larval development, survival/mortality,
-        and motility assays.
+        This version supports egg hatch, larval development, and survival/mortality assays.
         """
     )
 
 
 def read_example(name: str) -> pd.DataFrame:
     return pd.read_csv(SAMPLE_DIR / name)
+
+
+def read_uploaded_table(uploaded) -> pd.DataFrame:
+    """Read a CSV or Excel worksheet uploaded through Streamlit."""
+    name = getattr(uploaded, "name", "").lower()
+    if name.endswith((".xlsx", ".xls")):
+        return pd.read_excel(uploaded)
+    return pd.read_csv(uploaded)
 
 
 def dataframe_to_excel_bytes(tables: dict[str, pd.DataFrame]) -> bytes:
@@ -190,8 +197,6 @@ def raw_plot_settings(assay_name: str) -> tuple[str, str]:
         return "development_fraction", "Development rate (%)"
     if assay_name == "Survival":
         return "survival_fraction", "Survival (%)"
-    if assay_name == "Motility":
-        return "normalized_motility", "Motility (% of control)"
     return "response_fraction", "Response (%)"
 
 
@@ -225,22 +230,21 @@ def make_method_text(
 sample_options = {
     "Egg hatch example": "egg_hatch_example.csv",
     "Larval development example": "larval_development_example.csv",
-    "Motility example": "motility_example.csv",
     "Survival example": "survival_example.csv",
 }
 
 example_presets = {
     "Egg hatch example": {"assay": "Egg hatch", "reference": "WMD"},
     "Larval development example": {"assay": "Larval development", "reference": "WMD"},
-    "Motility example": {"assay": "Motility", "reference": "WMD"},
     "Survival example": {"assay": "Survival", "reference": "WMD"},
 }
 
 template_files = {
     "Egg hatch template": "egg_hatch_template.csv",
     "Larval development template": "larval_development_template.csv",
-    "Motility template": "motility_template.csv",
     "Survival template": "survival_template.csv",
+    "Normalized XY single-dataset template": "normalized_xy_replicates_template.csv",
+    "Normalized XY multi-group template": "normalized_xy_multigroup_template.csv",
 }
 
 
@@ -286,7 +290,7 @@ if page == "Why ARStat / comparison":
     st.markdown(
         """
         ARStat is being built for a specific gap: parasitology labs often collect raw count data
-        from egg hatch assays, larval development assays, mortality/survival assays, and motility assays,
+        from egg hatch assays, larval development assays, and mortality/survival assays,
         but the analysis is commonly performed with a mixture of spreadsheets, general dose-response tools,
         and manually edited figures.
 
@@ -294,7 +298,7 @@ if page == "Why ARStat / comparison":
 
         ARStat converts raw assay measurements into a consistent, reproducible analysis workflow:
 
-        - assay-specific response calculations, such as hatch inhibition, development inhibition, mortality, or motility inhibition
+        - assay-specific response calculations, such as hatch inhibition, development inhibition, or mortality
         - automatic data checks for missing controls, too few dose levels, zero counts, and non-numeric dose entries
         - IC50 estimation with a four-parameter logistic model
         - resistance ratios relative to a selected susceptible/control isolate
@@ -308,7 +312,7 @@ if page == "Why ARStat / comparison":
 
         | Tool type | Strength | Limitation that ARStat addresses |
         |---|---|---|
-        | GraphPad Prism | Excellent general curve fitting and figures | Commercial; not assay-aware for parasitology; manual setup can vary between users |
+        | Commercial curve-fitting software | Excellent general curve fitting and figures | Usually requires users to structure and preprocess assay responses manually |
         | R drc / dr4pl | Powerful programmable dose-response modeling | Requires R coding and user-defined preprocessing |
         | General IC50 calculators | Simple and fast | Usually handle concentration/response pairs, not raw assay counts |
         | eggCounts / FECRT tools | Strong for fecal egg count reduction tests | Focused on FECRT rather than in vitro dose-response assays |
@@ -349,7 +353,6 @@ if page == "How to / user guide":
             {"Assay": "Egg hatch", "Required measurements": "L1 and eggs", "Default response": "Hatch inhibition = 1 - L1/(L1 + eggs)"},
             {"Assay": "Larval development", "Required measurements": "developed and undeveloped", "Default response": "Development inhibition = 1 - developed/(developed + undeveloped)"},
             {"Assay": "Survival", "Required measurements": "dead and alive", "Default response": "Mortality / affected fraction = dead/(dead + alive)"},
-            {"Assay": "Motility", "Required measurements": "motility_score", "Default response": "Motility inhibition = 1 - score/mean zero-dose score"},
         ]
     )
     st.dataframe(required, width='stretch')
@@ -370,33 +373,53 @@ if page == "How to / user guide":
     st.stop()
 
 st.sidebar.header("1. Data")
-source = st.sidebar.radio("Data source", ["Use example data", "Upload CSV"], index=0)
+input_layout = st.sidebar.radio(
+    "Input layout",
+    ["Raw assay measurements", "Normalized XY replicate table"],
+    index=0,
+    help=(
+        "Raw measurements use assay-specific counts or scores. The normalized XY layout uses one dose column "
+        "and adjacent columns containing individual replicate responses; ARStat calculates mean, SD, and n internally."
+    ),
+)
 
-if source == "Use example data":
-    sample_label = st.sidebar.selectbox("Example", list(sample_options.keys()), key="sample_label")
-    # When a different example is chosen, automatically switch the assay and reference settings.
-    if st.session_state.get("last_sample_label") != sample_label:
-        preset = example_presets.get(sample_label, {})
-        st.session_state["assay_type"] = preset.get("assay", "Egg hatch")
-        # Store the desired reference in the selectbox widget state.
-        # The selectbox below is created without an explicit default index to avoid
-        # Streamlit's warning about setting a widget value twice.
-        st.session_state["reference_group_select"] = preset.get("reference", "None") or "None"
-        st.session_state["last_sample_label"] = sample_label
-    df = read_example(sample_options[sample_label])
+if input_layout == "Raw assay measurements":
+    source = st.sidebar.radio("Data source", ["Use example data", "Upload CSV"], index=0)
+    if source == "Use example data":
+        sample_label = st.sidebar.selectbox("Example", list(sample_options.keys()), key="sample_label")
+        if st.session_state.get("last_sample_label") != sample_label:
+            preset = example_presets.get(sample_label, {})
+            st.session_state["assay_type"] = preset.get("assay", "Egg hatch")
+            st.session_state["reference_group_select"] = preset.get("reference", "None") or "None"
+            st.session_state["last_sample_label"] = sample_label
+        df = read_example(sample_options[sample_label])
+    else:
+        uploaded = st.sidebar.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx"], key="raw_upload")
+        if uploaded is None:
+            st.info("Upload a CSV file or switch to an example dataset.")
+            st.stop()
+        df = read_uploaded_table(uploaded)
+        sample_label = "uploaded"
+        st.session_state["last_sample_label"] = None
 else:
-    uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+    source = "Upload CSV"
+    sample_label = "normalized_xy"
+    uploaded = st.sidebar.file_uploader(
+        "Upload normalized XY replicate table",
+        type=["csv", "xlsx"],
+        key="normalized_xy_upload",
+        help="Use one dose/X column and one or more individual replicate/Y columns. Do not precompute mean, SD, or n.",
+    )
     if uploaded is None:
-        st.info("Upload a CSV file or switch to an example dataset.")
+        st.info("Upload a normalized XY replicate table or switch to raw assay measurements.")
         st.stop()
-    df = pd.read_csv(uploaded)
+    df = read_uploaded_table(uploaded)
     st.session_state["last_sample_label"] = None
 
 with st.sidebar.expander("Download sample data/templates", expanded=False):
     show_download_library(location=st.sidebar)
 
 cols = list(df.columns)
-
 if df.empty:
     st.error("The selected dataset is empty. Upload a CSV with at least one data row.")
     st.stop()
@@ -410,11 +433,7 @@ assay_names = list(ASSAY_PRESETS.keys())
 default_assay = st.session_state.get("assay_type", "Egg hatch")
 if default_assay not in assay_names:
     st.session_state["assay_type"] = "Egg hatch"
-assay_name = st.sidebar.selectbox(
-    "Assay type",
-    assay_names,
-    key="assay_type",
-)
+assay_name = st.sidebar.selectbox("Assay type", assay_names, key="assay_type")
 assay = ASSAY_PRESETS[assay_name]
 
 def default_col(name: str, fallback_index: int = 0) -> str:
@@ -422,40 +441,103 @@ def default_col(name: str, fallback_index: int = 0) -> str:
         return name
     return cols[fallback_index] if cols else ""
 
-strain_col = st.sidebar.selectbox("Strain / isolate column", cols, index=cols.index(default_col("strain")) if "strain" in cols else 0)
-dose_col = st.sidebar.selectbox("Dose column", cols, index=cols.index(default_col("dose")) if "dose" in cols else min(1, len(cols) - 1))
-replicate_col = st.sidebar.selectbox("Replicate / well column", ["None"] + cols, index=(["None"] + cols).index("replicate") if "replicate" in cols else 0)
-drug_col = st.sidebar.selectbox("Drug column", ["None"] + cols, index=(["None"] + cols).index("drug") if "drug" in cols else 0)
-
-include_drug_in_groups = drug_col != "None"
-group_cols = [drug_col, strain_col] if include_drug_in_groups else [strain_col]
-
-dose_unit = st.sidebar.text_input(
-    "Dose unit",
-    value="µM",
-    help="Used only for plot labels and generated methods text. Keep one dose unit within each uploaded file.",
-)
-
-if assay_name == "Motility":
-    score_default = assay.get("score_default", "motility_score")
-    score_col = st.sidebar.selectbox(
-        "Motility score column",
-        cols,
-        index=cols.index(default_col(score_default)) if score_default in cols else 0,
+if input_layout == "Raw assay measurements":
+    strain_col = st.sidebar.selectbox(
+        "Strain / isolate column", cols, index=cols.index(default_col("strain")) if "strain" in cols else 0
     )
-else:
+    dose_col = st.sidebar.selectbox(
+        "Dose column", cols, index=cols.index(default_col("dose")) if "dose" in cols else min(1, len(cols) - 1)
+    )
+    replicate_col = st.sidebar.selectbox(
+        "Replicate / well column", ["None"] + cols, index=(["None"] + cols).index("replicate") if "replicate" in cols else 0
+    )
+    drug_col = st.sidebar.selectbox(
+        "Drug column", ["None"] + cols, index=(["None"] + cols).index("drug") if "drug" in cols else 0
+    )
+    include_drug_in_groups = drug_col != "None"
+    group_cols = [drug_col, strain_col] if include_drug_in_groups else [strain_col]
+    dose_unit = st.sidebar.text_input(
+        "Dose unit", value="µM", help="Used for plot labels and generated methods text."
+    )
     success_default = assay.get("success_default", cols[0])
     failure_default = assay.get("failure_default", cols[0])
     success_col = st.sidebar.selectbox(
-        assay.get("success_label", "Success count"),
-        cols,
+        assay.get("success_label", "Success count"), cols,
         index=cols.index(default_col(success_default)) if success_default in cols else 0,
     )
     failure_col = st.sidebar.selectbox(
-        assay.get("failure_label", "Failure count"),
-        cols,
+        assay.get("failure_label", "Failure count"), cols,
         index=cols.index(default_col(failure_default)) if failure_default in cols else 0,
     )
+    strain_values = sorted([str(v) for v in df[strain_col].dropna().unique()]) if strain_col in df.columns else []
+else:
+    dose_col = st.sidebar.selectbox(
+        "Dose / X column",
+        cols,
+        index=cols.index("dose") if "dose" in cols else 0,
+    )
+    identifier_options = ["None"] + [c for c in cols if c != dose_col]
+    group_candidates = ["group", "Group", "strain", "Strain", "isolate", "Isolate", "genetic_background", "population", "treatment"]
+    detected_group = next((c for c in group_candidates if c in cols and c != dose_col), "None")
+    group_col_input = st.sidebar.selectbox(
+        "Experimental group column (optional)",
+        identifier_options,
+        index=identifier_options.index(detected_group),
+        help="Examples include strain, isolate, genetic background, population, or treatment group.",
+    )
+    drug_candidates = ["drug", "Drug", "compound", "Compound"]
+    detected_drug = next((c for c in drug_candidates if c in cols and c not in {dose_col, group_col_input}), "None")
+    drug_options = ["None"] + [c for c in cols if c not in {dose_col, group_col_input}]
+    drug_col_input = st.sidebar.selectbox(
+        "Drug / compound column (optional)",
+        drug_options,
+        index=drug_options.index(detected_drug) if detected_drug in drug_options else 0,
+    )
+    excluded = {dose_col}
+    if group_col_input != "None":
+        excluded.add(group_col_input)
+    if drug_col_input != "None":
+        excluded.add(drug_col_input)
+    available_y = [c for c in cols if c not in excluded]
+    likely_replicates = [c for c in available_y if str(c).lower().startswith(("rep", "y"))]
+    replicate_cols = st.sidebar.multiselect(
+        "Replicate / Y columns",
+        available_y,
+        default=likely_replicates or available_y,
+        help="Select individual replicate response columns. ARStat calculates mean, SD, and n internally.",
+    )
+    dataset_label = st.sidebar.text_input(
+        "Single-dataset group label",
+        value="Dataset 1",
+        help="Used only when no experimental group column is selected.",
+    )
+    drug_label = st.sidebar.text_input(
+        "Single-dataset drug label",
+        value="Drug",
+        help="Used only when no drug/compound column is selected.",
+    )
+    normalized_group_col = None if group_col_input == "None" else group_col_input
+    normalized_drug_col = None if drug_col_input == "None" else drug_col_input
+    dose_unit = st.sidebar.text_input("Dose unit", value="µM")
+    normalized_scale_label = st.sidebar.selectbox(
+        "Response scale", ["Auto-detect", "0–100 percent", "0–1 fraction"], index=0
+    )
+    normalized_scale = {"Auto-detect": "auto", "0–100 percent": "percent", "0–1 fraction": "fraction"}[normalized_scale_label]
+    normalized_direction_label = st.sidebar.radio(
+        "Imported response represents",
+        ["Raw outcome (e.g., % hatched; decreases with dose)", "Inhibition / affected response (increases with dose)"],
+        index=0,
+    )
+    normalized_direction = "raw_outcome" if normalized_direction_label.startswith("Raw outcome") else "effect"
+    strain_col = "strain"
+    drug_col = "drug"
+    replicate_col = "replicate"
+    include_drug_in_groups = True
+    group_cols = [drug_col, strain_col]
+    if normalized_group_col:
+        strain_values = sorted(str(v) for v in df[normalized_group_col].dropna().unique())
+    else:
+        strain_values = [dataset_label] if dataset_label else ["Dataset 1"]
 
 st.sidebar.header("3. Model settings")
 n_boot = st.sidebar.select_slider(
@@ -475,11 +557,8 @@ plot_display = st.sidebar.radio(
     help="The IC50 model is fit to inhibition/mortality. The traditional view displays the complementary raw assay outcome, such as hatch rate or survival, so the curve declines with increasing dose.",
 )
 
-strain_values = []
-if strain_col in df.columns:
-    strain_values = sorted([str(v) for v in df[strain_col].dropna().unique()])
 preferred_ref = st.session_state.get("reference_group_select", None)
-default_ref = choose_reference(strain_values, preferred=preferred_ref)
+default_ref = "" if input_layout == "Normalized XY replicate table" else choose_reference(strain_values, preferred=preferred_ref)
 reference_options = ["None"] + strain_values
 if default_ref and default_ref not in reference_options:
     reference_options.append(default_ref)
@@ -521,26 +600,37 @@ def dataframe_signature(dataframe: pd.DataFrame) -> str:
         return f"{dataframe.shape}_{list(dataframe.columns)}"
 
 current_config = {
+    "input_layout": input_layout,
     "data_source": source,
     "sample_label": sample_label if source == "Use example data" else "uploaded",
     "data_signature": dataframe_signature(df),
     "assay_name": assay_name,
-    "strain_col": strain_col,
     "dose_col": dose_col,
     "dose_unit": dose_unit,
-    "replicate_col": replicate_col,
-    "drug_col": drug_col,
-    "include_drug_in_groups": include_drug_in_groups,
-    "group_cols": group_cols,
     "reference_group": reference_group,
     "n_boot": n_boot,
     "plot_display": plot_display,
 }
-if assay_name == "Motility":
-    current_config["score_col"] = score_col
-else:
+if input_layout == "Raw assay measurements":
+    current_config.update({
+        "strain_col": strain_col,
+        "replicate_col": replicate_col,
+        "drug_col": drug_col,
+        "include_drug_in_groups": include_drug_in_groups,
+        "group_cols": group_cols,
+    })
     current_config["success_col"] = success_col
     current_config["failure_col"] = failure_col
+else:
+    current_config.update({
+        "replicate_cols": tuple(replicate_cols),
+        "normalized_group_col": normalized_group_col,
+        "normalized_drug_col": normalized_drug_col,
+        "dataset_label": dataset_label,
+        "drug_label": drug_label,
+        "normalized_scale": normalized_scale,
+        "normalized_direction": normalized_direction,
+    })
 
 st.subheader("Input preview")
 st.caption(f"Loaded {len(df):,} rows and {len(df.columns):,} columns. Confirm column mappings in the sidebar before running the analysis.")
@@ -559,13 +649,21 @@ def compute_arstat_results():
     working = df.copy()
     working[dose_col] = pd.to_numeric(working[dose_col], errors="coerce")
 
-    if assay_name == "Motility":
-        analysis_df, response_warnings = calculate_motility_response(
+    if input_layout == "Normalized XY replicate table":
+        analysis_df, response_warnings = prepare_normalized_xy_response(
             working,
-            score_col=score_col,
-            group_cols=group_cols,
             dose_col=dose_col,
+            replicate_cols=replicate_cols,
+            assay_name=assay_name,
+            group_col=normalized_group_col,
+            drug_col=normalized_drug_col,
+            dataset_label=dataset_label,
+            drug_label=drug_label,
+            unit=dose_unit,
+            value_scale=normalized_scale,
+            response_direction=normalized_direction,
         )
+        analysis_dose_col = "dose"
     else:
         analysis_df, response_warnings = calculate_count_response(
             working,
@@ -573,15 +671,16 @@ def compute_arstat_results():
             failure_col=failure_col,
             assay_name=assay_name,
         )
+        analysis_dose_col = dose_col
 
-    validation_warnings = assay_warnings(analysis_df, group_cols=group_cols, dose_col=dose_col)
+    validation_warnings = assay_warnings(analysis_df, group_cols=group_cols, dose_col=analysis_dose_col)
     all_warnings = response_warnings + validation_warnings
 
     statistical_notes = [
         "Zero-dose controls are included in model fitting and summary tables. Because log-scale plots cannot display a true dose of 0, zero-dose controls are shown at a symbolic left-edge tick labelled 0.",
         "Pairwise dose-level tests are exploratory. Raw p-values are reported together with Benjamini-Hochberg and Bonferroni adjusted p-values.",
     ]
-    if assay_name != "Motility":
+    if input_layout == "Raw assay measurements":
         statistical_notes.append(
             "For count-based assays, Fisher exact tests pool replicate counts at each dose. This approach does not model replicate-to-replicate overdispersion and may be anticonservative when wells are highly variable."
         )
@@ -592,9 +691,9 @@ def compute_arstat_results():
     fit_summary, fit_results = fit_dose_response(
         analysis_df,
         group_cols=group_cols,
-        dose_col=dose_col,
+        dose_col=analysis_dose_col,
         response_col="response_fraction",
-        total_col="total_count" if assay_name != "Motility" else None,
+        total_col=("total_count" if input_layout == "Raw assay measurements" else None),
         n_boot=n_boot,
     )
 
@@ -610,7 +709,7 @@ def compute_arstat_results():
     dose_summary = summarize_by_dose(
         analysis_df,
         group_cols=group_cols,
-        dose_col=dose_col,
+        dose_col=analysis_dose_col,
         response_col="response_fraction",
     )
 
@@ -629,11 +728,11 @@ def compute_arstat_results():
             rr_message = f"Resistance ratios could not be calculated: {exc}"
 
     try:
-        if assay_name == "Motility":
+        if input_layout == "Normalized XY replicate table":
             test_table = pairwise_continuous_tests(
                 analysis_df,
                 comparison_col=strain_col,
-                dose_col=dose_col,
+                dose_col=analysis_dose_col,
                 response_col="response_fraction",
                 stratify_cols=[drug_col] if include_drug_in_groups else [],
             )
@@ -641,7 +740,7 @@ def compute_arstat_results():
             test_table = pairwise_count_tests(
                 analysis_df,
                 comparison_col=strain_col,
-                dose_col=dose_col,
+                dose_col=analysis_dose_col,
                 stratify_cols=[drug_col] if include_drug_in_groups else [],
             )
         test_message = ""
@@ -661,7 +760,7 @@ def compute_arstat_results():
         analysis_df,
         fit_results=fit_results,
         group_cols=group_cols,
-        dose_col=dose_col,
+        dose_col=analysis_dose_col,
         response_col=plot_response_col,
         y_label=response_label,
         dose_unit=dose_unit,
@@ -672,12 +771,19 @@ def compute_arstat_results():
 
     methods_text = make_method_text(
         assay_name=assay_name,
-        dose_col=dose_col,
+        dose_col=analysis_dose_col,
         group_cols=group_cols,
         response_label=assay.get("effect_label", "response"),
         n_boot=n_boot,
         dose_unit=dose_unit,
     )
+    if input_layout == "Normalized XY replicate table":
+        methods_text += (
+            " Normalized responses were imported from a wide XY replicate table containing one dose column, "
+            "optional experimental-group and drug columns, and individual replicate response columns. ARStat "
+            "reshaped the table to long format, fitted one curve per drug-by-group combination, and calculated "
+            "dose-level means, standard deviations, and sample sizes from the replicate values."
+        )
 
     all_tables = {
         "prepared_data": analysis_df,
@@ -706,7 +812,7 @@ def compute_arstat_results():
         "converged_count": converged_count,
         "fit_group_count": len(fit_summary),
         "rows_analyzed": len(analysis_df),
-        "dose_levels": analysis_df[dose_col].nunique(),
+        "dose_levels": analysis_df[analysis_dose_col].nunique(),
         "response_label": response_label,
         "plot_mode": plot_mode,
     }
@@ -842,4 +948,4 @@ if stored_config != current_config:
 if stored_results is not None:
     render_arstat_results(stored_results)
 
-st.caption("ARStat v1.0.0-rc1. Example datasets use illustrative hookworm assay data; downloads reuse stored results.")
+st.caption("ARStat v1.1.1. Example datasets use illustrative hookworm assay data; downloads reuse stored results.")

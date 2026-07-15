@@ -1,4 +1,4 @@
-# ARStat v1.0.0
+# ARStat v1.1.1
 
 [![Tests](https://github.com/dohalloran/ARStat/actions/workflows/tests.yml/badge.svg)](https://github.com/dohalloran/ARStat/actions/workflows/tests.yml)
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://arstat-jm7varr6fck8uajj4lgs6t.streamlit.app/)
@@ -7,14 +7,13 @@
 
 ARStat is a Streamlit web application and scriptable Python backend for reproducible statistical analysis and visualization of anthelmintic resistance dose-response assays.
 
-ARStat supports four assay workflows:
+ARStat supports three assay workflows:
 
 - **Egg hatch assay**
 - **Larval development assay**
 - **Survival/mortality assay**
-- **Motility assay**
 
-The app starts from raw assay measurements, calculates assay-specific response variables, fits dose-response curves, estimates IC50 values, calculates fold-resistance versus a selected reference isolate, performs exploratory dose-level tests with multiple-testing correction, and exports analysis tables, plots, Excel workbooks, and methods text.
+The app starts from raw assay measurements or normalized XY replicate tables, calculates assay-specific response variables, fits dose-response curves, estimates IC50 values, calculates fold-resistance versus a selected reference isolate, performs exploratory dose-level tests with multiple-testing correction, and exports analysis tables, plots, Excel workbooks, and methods text.
 
 ## Hookworm-style demonstration data
 
@@ -25,7 +24,6 @@ This release includes synthetic demonstration datasets using *Ancylostoma caninu
 | Egg hatch | WMD vs KGR | Thiabendazole |
 | Larval development | WMD vs KGR | Ivermectin |
 | Survival/mortality | WMD vs KGR | Ivermectin |
-| Motility | WMD vs KGR | Ivermectin |
 
 The bundled datasets are synthetic demonstration datasets for testing the interface and workflow. They are not primary experimental measurements and should not be cited as biological results.
 
@@ -52,6 +50,37 @@ Then open the local URL shown by Streamlit, usually:
 ```text
 http://localhost:8501
 ```
+
+
+## Supported input layouts
+
+### Raw assay measurements
+
+Use assay-specific count or score columns. ARStat calculates the biological response before fitting the dose-response model.
+
+### Normalized XY replicate table
+
+Use the same wide XY layout commonly used by dose-response applications:
+
+```text
+dose,replicate_1,replicate_2,replicate_3
+0,100,100,100
+0.5,92,89,91
+2.5,78,82,80
+5,48,43,46
+```
+
+The dose/X column and individual replicate/Y columns are required. Optional experimental-group and drug columns allow several strains, isolates, genetic backgrounds, populations, or treatment groups to be analyzed in one file:
+
+```text
+Group,Drug,Dose,Rep1,Rep2,Rep3
+WMD,TBZ,0,100,99,101
+WMD,TBZ,0.5,91,89,90
+KGR,TBZ,0,100,100,99
+KGR,TBZ,0.5,98,96,97
+```
+
+ARStat maps the selected experimental-group column to its internal backward-compatible `strain` field and fits one curve per drug-by-group combination. Values may be entered as percentages (`0–100`) or fractions (`0–1`). ARStat reshapes the table internally and calculates the mean, standard deviation, and sample size. Do not precompute or import means, medians, standard deviations, or sample sizes. CSV and XLSX files are supported.
 
 ## Reproducibility and validation
 
@@ -98,14 +127,15 @@ Benchmark outputs are written to `benchmarks/`. Example validation outputs are w
 
 ## Required columns
 
-All assays should include `strain`, `drug`, `dose`, `unit`, and `replicate`.
+For raw assay measurements, files should include `strain`, `drug`, `dose`, `unit`, and `replicate` or equivalent columns that can be mapped in the interface.
 
-Assay-specific columns:
+For normalized XY replicate input, only a dose column and individual replicate response columns are required. Experimental-group and drug columns are optional. An experimental group can represent a strain, isolate, genetic background, population, treatment, or another category for which an independent curve should be fitted.
+
+Assay-specific raw-count columns:
 
 - Egg hatch: `eggs`, `L1`
 - Larval development: `developed`, `undeveloped`
 - Survival/mortality: `alive`, `dead`
-- Motility: `motility_score`
 
 ## Repository structure
 

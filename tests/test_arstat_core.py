@@ -3,12 +3,12 @@ import pandas as pd
 
 from arstat_core import (
     calculate_count_response,
-    calculate_motility_response,
     calculate_resistance_ratios,
     fit_dose_response,
     four_parameter_logistic,
     pairwise_count_tests,
     pairwise_continuous_tests,
+    prepare_normalized_xy_response,
     summarize_by_dose,
 )
 
@@ -66,36 +66,12 @@ def test_survival_workflow():
     _assert_basic_fit(prepared, group_cols=["drug", "strain"])
 
 
-def test_motility_workflow():
-    df = pd.read_csv("sample_data/motility_example.csv")
-    prepared, warnings = calculate_motility_response(
-        df,
-        score_col="motility_score",
-        group_cols=["drug", "strain"],
-        dose_col="dose",
-    )
-    assert all("missing" not in warning.lower() for warning in warnings)
-    assert prepared["response_fraction"].between(0, 1).all()
-    _assert_basic_fit(prepared, group_cols=["drug", "strain"])
-
-
 def test_count_pairwise_tests_include_multiple_testing_adjustment():
     df = pd.read_csv("sample_data/egg_hatch_example.csv")
     prepared, _ = calculate_count_response(
         df, success_col="L1", failure_col="eggs", assay_name="Egg hatch"
     )
     tests = pairwise_count_tests(prepared, comparison_col="strain", dose_col="dose", stratify_cols=["drug"])
-    assert not tests.empty
-    assert "p_value_bh" in tests.columns
-    assert "p_value_bonferroni" in tests.columns
-
-
-def test_motility_pairwise_tests_include_multiple_testing_adjustment():
-    df = pd.read_csv("sample_data/motility_example.csv")
-    prepared, _ = calculate_motility_response(
-        df, score_col="motility_score", group_cols=["drug", "strain"], dose_col="dose"
-    )
-    tests = pairwise_continuous_tests(prepared, comparison_col="strain", dose_col="dose", stratify_cols=["drug"])
     assert not tests.empty
     assert "p_value_bh" in tests.columns
     assert "p_value_bonferroni" in tests.columns
@@ -119,24 +95,6 @@ def test_bootstrap_resistance_ratio_confidence_interval_columns():
     assert "fold_resistance_CI_method" in rr.columns
     assert "fold_resistance_CI_low" in rr.columns
     assert "fold_resistance_CI_high" in rr.columns
-
-
-def test_motility_above_control_emits_warning_and_clips_to_zero():
-    df = pd.DataFrame(
-        {
-            "drug": ["IVM", "IVM", "IVM"],
-            "strain": ["WMD", "WMD", "WMD"],
-            "dose": [0, 0, 1],
-            "motility_score": [10, 10, 12],
-        }
-    )
-    prepared, warnings = calculate_motility_response(
-        df, score_col="motility_score", group_cols=["drug", "strain"], dose_col="dose"
-    )
-    assert any("above the matched zero-dose control" in warning for warning in warnings)
-    stimulated = prepared.loc[prepared["dose"] == 1].iloc[0]
-    assert np.isclose(stimulated["motility_inhibition_fraction_unclipped"], -0.2)
-    assert np.isclose(stimulated["response_fraction"], 0.0)
 
 
 def test_decreasing_fit_is_flagged_in_message():
@@ -174,16 +132,9 @@ def test_raw_outcome_columns_exist_for_traditional_plot_mode():
         failure_col="alive",
         assay_name="Survival",
     )
-    motility, _ = calculate_motility_response(
-        pd.read_csv("sample_data/motility_example.csv"),
-        score_col="motility_score",
-        group_cols=["drug", "strain"],
-        dose_col="dose",
-    )
     assert "hatch_fraction" in egg.columns
     assert "development_fraction" in larval.columns
     assert "survival_fraction" in survival.columns
-    assert "normalized_motility" in motility.columns
 
 
 def test_traditional_curve_is_complement_of_inhibition_fit():
@@ -204,3 +155,121 @@ def test_traditional_curve_is_complement_of_inhibition_fit():
     predicted_hatch = 1 - predicted_inhibition
     residual = np.abs(predicted_hatch - positive["hatch_fraction"].to_numpy(dtype=float))
     assert residual.mean() < 0.20
+
+
+def test_normalized_xy_replicate_import_percent_scale():
+    wide = pd.DataFrame({
+        "dose": [0, 1, 3, 10, 30],
+        "replicate_1": [100, 92, 75, 40, 8],
+        "replicate_2": [100, 90, 78, 43, 5],
+        "replicate_3": [100, 91, 76, 41, 6],
+    })
+    prepared, warnings = prepare_normalized_xy_response(
+        wide,
+        dose_col="dose",
+        replicate_cols=["replicate_1", "replicate_2", "replicate_3"],
+        assay_name="Egg hatch",
+        dataset_label="BCR",
+        drug_label="TBZ",
+        unit="uM",
+        value_scale="percent",
+        response_direction="raw_outcome",
+    )
+    assert len(prepared) == 15
+    assert prepared["hatch_fraction"].between(0, 1).all()
+    assert prepared["response_fraction"].between(0, 1).all()
+    assert np.isclose(prepared.loc[prepared["dose"] == 0, "hatch_fraction"].mean(), 1.0)
+    assert prepared.loc[prepared["dose"] == 30, "response_fraction"].mean() > 0.9
+    summary = summarize_by_dose(prepared, group_cols=["drug", "strain"], dose_col="dose")
+    assert (summary["n"] == 3).all()
+    assert summary["sd_response"].notna().all()
+    fit_summary, _ = fit_dose_response(
+        prepared, group_cols=["drug", "strain"], dose_col="dose", total_col=None
+    )
+    assert fit_summary.loc[0, "converged"]
+    assert fit_summary.loc[0, "IC50"] > 0
+
+
+def test_normalized_xy_import_does_not_require_summary_columns():
+    wide = pd.DataFrame({
+        "concentration": [0, 2, 20, 50, 100],
+        "well_A": [1.0, 0.95, 0.80, 0.20, 0.02],
+        "well_B": [1.0, 0.94, 0.82, 0.18, 0.01],
+    })
+    prepared, _ = prepare_normalized_xy_response(
+        wide,
+        dose_col="concentration",
+        replicate_cols=["well_A", "well_B"],
+        assay_name="Larval development",
+        value_scale="fraction",
+        response_direction="raw_outcome",
+    )
+    assert set(prepared["replicate"]) == {"well_A", "well_B"}
+    assert "std" not in wide.columns
+    assert "n" not in wide.columns
+    assert "development_fraction" in prepared.columns
+
+
+def test_normalized_xy_multigroup_import_preserves_groups_and_drugs():
+    wide = pd.DataFrame({
+        "Group": ["WMD"] * 6 + ["KGR"] * 6,
+        "Drug": ["TBZ"] * 12,
+        "Dose": [0, 0.5, 2.5, 5, 12.5, 25] * 2,
+        "Rep1": [100, 92, 78, 48, 8, 0, 100, 98, 91, 78, 45, 12],
+        "Rep2": [99, 90, 80, 45, 5, 0, 100, 96, 89, 75, 42, 10],
+        "Rep3": [100, 91, 79, 47, 6, 0, 99, 97, 90, 77, 44, 11],
+    })
+    prepared, warnings = prepare_normalized_xy_response(
+        wide,
+        dose_col="Dose",
+        replicate_cols=["Rep1", "Rep2", "Rep3"],
+        assay_name="Egg hatch",
+        group_col="Group",
+        drug_col="Drug",
+        unit="uM",
+        value_scale="percent",
+        response_direction="raw_outcome",
+    )
+    assert len(prepared) == 36
+    assert set(prepared["strain"]) == {"WMD", "KGR"}
+    assert set(prepared["drug"]) == {"TBZ"}
+    assert prepared.groupby(["drug", "strain", "dose"]).size().eq(3).all()
+    summary, results = fit_dose_response(
+        prepared,
+        group_cols=["drug", "strain"],
+        dose_col="dose",
+        total_col=None,
+    )
+    assert len(summary) == 2
+    assert summary["converged"].all()
+    rr = calculate_resistance_ratios(
+        summary,
+        group_col="strain",
+        reference_group="WMD",
+        fit_results=results,
+        group_cols=["drug", "strain"],
+    )
+    assert set(rr["strain"]) == {"WMD", "KGR"}
+    assert rr["fold_resistance_vs_reference"].notna().all()
+
+
+def test_normalized_xy_multigroup_allows_group_without_drug_column():
+    wide = pd.DataFrame({
+        "Background": ["WT", "WT", "Mutant", "Mutant"],
+        "Dose": [0, 10, 0, 10],
+        "Y1": [100, 20, 100, 60],
+        "Y2": [99, 22, 98, 62],
+    })
+    prepared, _ = prepare_normalized_xy_response(
+        wide,
+        dose_col="Dose",
+        replicate_cols=["Y1", "Y2"],
+        assay_name="Larval development",
+        group_col="Background",
+        drug_label="IVM",
+        value_scale="percent",
+        response_direction="raw_outcome",
+    )
+    assert set(prepared["strain"]) == {"WT", "Mutant"}
+    assert set(prepared["drug"]) == {"IVM"}
+    assert prepared["development_fraction"].between(0, 1).all()

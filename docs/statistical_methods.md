@@ -40,19 +40,6 @@ dead / (dead + alive)
 
 The modeled drug effect is mortality/affected fraction.
 
-### Motility assay
-
-Motility scores are normalized to the zero-dose mean within each isolate/drug group:
-
-```text
-normalized_motility = motility_score / mean_zero_dose_motility_for_same_group
-```
-
-The modeled drug effect is motility inhibition:
-
-```text
-1 - normalized_motility
-```
 
 ## Dose-response model
 
@@ -84,7 +71,7 @@ When bootstrap IC50 samples are available for both test and reference groups, AR
 
 For count-based assays, ARStat performs Fisher exact tests at each dose after pooling replicate counts within each group. Raw p-values are accompanied by Benjamini-Hochberg and Bonferroni adjusted p-values.
 
-For motility assays, ARStat performs Mann-Whitney U tests by default at each dose.
+For normalized replicate inputs, ARStat performs Mann-Whitney U tests by default at each dose.
 
 ## Limitations
 
