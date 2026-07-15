@@ -948,4 +948,4 @@ if stored_config != current_config:
 if stored_results is not None:
     render_arstat_results(stored_results)
 
-st.caption("ARStat v1.1.1. Example datasets use illustrative hookworm assay data; downloads reuse stored results.")
+st.caption("ARStat v1.0.0-rc1. Example datasets use illustrative hookworm assay data; downloads reuse stored results.")
