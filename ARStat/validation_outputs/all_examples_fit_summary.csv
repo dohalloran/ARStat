@@ -1,7 +1,0 @@
-assay_workflow,strain,drug,IC50,converged,message,warnings
-Egg hatch,KGR,thiabendazole,6.475313228597322,True,OK,
-Egg hatch,WMD,thiabendazole,0.530164192667248,True,OK,
-Larval development,KGR,ivermectin,26.319346331466654,True,OK,
-Larval development,WMD,ivermectin,2.431641730252903,True,OK,
-Survival,KGR,ivermectin,146.20770659191209,True,OK,
-Survival,WMD,ivermectin,12.790935925241909,True,OK,
