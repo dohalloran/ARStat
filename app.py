@@ -261,25 +261,43 @@ def choose_reference(values, preferred=None):
 
 
 def show_download_library(location=st.sidebar):
-    """Show download buttons for every sample and template CSV."""
-    location.markdown("**Sample data**")
-    for label, filename in sample_options.items():
-        location.download_button(
-            f"Download {label.lower()}",
-            data=(SAMPLE_DIR / filename).read_bytes(),
-            file_name=filename,
-            mime="text/csv",
-            key=f"sample-download-{filename}",
-        )
-    location.markdown("**Blank templates**")
-    for label, filename in template_files.items():
-        location.download_button(
-            f"Download {label.lower()}",
-            data=(TEMPLATE_DIR / filename).read_bytes(),
-            file_name=filename,
-            mime="text/csv",
-            key=f"template-download-{filename}",
-        )
+    """Show download buttons for available sample and template CSV files."""
+    available_samples = {
+        label: filename
+        for label, filename in sample_options.items()
+        if (SAMPLE_DIR / filename).is_file()
+    }
+    available_templates = {
+        label: filename
+        for label, filename in template_files.items()
+        if (TEMPLATE_DIR / filename).is_file()
+    }
+
+    if not available_samples and not available_templates:
+        location.caption("No downloadable sample files are currently available.")
+        return
+
+    if available_samples:
+        location.markdown("**Sample data**")
+        for label, filename in available_samples.items():
+            location.download_button(
+                label=f"Download {label.lower()}",
+                data=(SAMPLE_DIR / filename).read_bytes(),
+                file_name=filename,
+                mime="text/csv",
+                key=f"sample-download-{filename}",
+            )
+
+    if available_templates:
+        location.markdown("**Blank templates**")
+        for label, filename in available_templates.items():
+            location.download_button(
+                label=f"Download {label.lower()}",
+                data=(TEMPLATE_DIR / filename).read_bytes(),
+                file_name=filename,
+                mime="text/csv",
+                key=f"template-download-{filename}",
+            )
 
 
 st.sidebar.header("Navigation")
@@ -416,8 +434,8 @@ else:
     df = read_uploaded_table(uploaded)
     st.session_state["last_sample_label"] = None
 
-with st.sidebar.expander("Download sample data/templates", expanded=False):
-    show_download_library(location=st.sidebar)
+with st.sidebar.expander("Download sample data/templates", expanded=False) as download_panel:
+    show_download_library(location=download_panel)
 
 cols = list(df.columns)
 if df.empty:
