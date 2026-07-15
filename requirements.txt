@@ -1,7 +1,9 @@
 # Updated requirements — compatible with current package ecosystem (June 2026)
 # Previously pinned to Python 3.7-era versions (streamlit==1.23.1, pandas==1.3.5, etc.)
 # which caused a deprecation crash on streamlit >= 1.40 (use_container_width removed).
-streamlit>=1.40.0
+# Minimum raised to 1.43.0: app.py's download_button() calls use on_click="ignore",
+# a feature that does not exist before Streamlit 1.43.0 (raises TypeError on click).
+streamlit>=1.43.0
 pandas>=2.0.0
 numpy>=1.24.0
 scipy>=1.10.0

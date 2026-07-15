@@ -434,8 +434,8 @@ else:
     df = read_uploaded_table(uploaded)
     st.session_state["last_sample_label"] = None
 
-with st.sidebar.expander("Download sample data/templates", expanded=False) as download_panel:
-    show_download_library(location=download_panel)
+download_panel = st.sidebar.expander("Download sample data/templates", expanded=False)
+show_download_library(location=download_panel)
 
 cols = list(df.columns)
 if df.empty:
