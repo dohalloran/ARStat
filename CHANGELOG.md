@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.2.0 — motility IC50 workflow restored
+
+- Restored motility as a fully supported fourth assay workflow while retaining survival/mortality.
+- Added raw continuous motility/activity input with normalization to the mean zero-dose control within each fitted group.
+- Added support for pre-normalized motility values supplied as 0–100 percentages or 0–1 fractions.
+- Added explicit retained-motility versus motility-inhibition response direction handling.
+- Added descending relative-motility plotting while fitting the increasing motility-inhibition response.
+- Added replicate-level Mann-Whitney dose comparisons for motility data.
+- Added a motility template, synthetic example dataset, simulated benchmark, validation outputs, tests, and documentation.
+- Updated application and citation version metadata to v1.2.0.
+
 ## v1.1.1 — focused assay scope
 
 - Focused ARStat on egg hatch, larval development, and survival/mortality assays.

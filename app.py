@@ -23,6 +23,7 @@ from arstat_core import (
     four_parameter_logistic,
     pairwise_continuous_tests,
     pairwise_count_tests,
+    prepare_motility_response,
     prepare_normalized_xy_response,
     summarize_by_dose,
 )
@@ -46,7 +47,7 @@ with st.expander("What ARStat does", expanded=False):
         """
         ARStat turns raw assay counts or normalized replicate responses into standardized dose-response outputs.
 
-        The bundled examples use illustrative hookworm datasets: Ancylostoma caninum WMD as the susceptible reference and KGR as a resistant isolate. Thiabendazole is used for the egg hatch example; ivermectin is used for larval development and survival/mortality examples.
+        The bundled examples use illustrative hookworm datasets: Ancylostoma caninum WMD as the susceptible reference and KGR as a resistant isolate. Thiabendazole is used for the egg hatch example; ivermectin is used for larval development, motility, and survival/mortality examples.
 
         - assay-specific response calculations
         - input validation and warnings
@@ -57,7 +58,7 @@ with st.expander("What ARStat does", expanded=False):
         - per-dose pairwise tests with multiple-testing-adjusted p-values
         - downloadable CSV tables, Excel workbooks, and publication-ready PNG figures
 
-        This version supports egg hatch, larval development, and survival/mortality assays.
+        This version supports egg hatch, larval development, motility, and survival/mortality assays.
         """
     )
 
@@ -179,7 +180,14 @@ def make_dose_response_plot(
     unit_text = f" ({dose_unit})" if dose_unit else ""
     ax.set_xlabel(f"Drug concentration{unit_text}; zero-dose controls shown at symbolic left tick")
     ax.set_ylabel(y_label)
-    ax.set_ylim(0, 105)
+    plotted_y = pd.to_numeric(plot_data[response_col], errors="coerce").dropna().to_numpy(dtype=float) * 100
+    if plotted_y.size:
+        lower = min(0.0, float(np.nanmin(plotted_y)))
+        upper = max(100.0, float(np.nanmax(plotted_y)))
+        padding = max(5.0, 0.05 * max(upper - lower, 1.0))
+        ax.set_ylim(lower - padding if lower < 0 else 0, upper + padding)
+    else:
+        ax.set_ylim(0, 105)
     if plot_mode == "raw_outcome":
         ax.set_title("Traditional IC50 curve: raw outcome declines with dose")
     else:
@@ -197,6 +205,8 @@ def raw_plot_settings(assay_name: str) -> tuple[str, str]:
         return "development_fraction", "Development rate (%)"
     if assay_name == "Survival":
         return "survival_fraction", "Survival (%)"
+    if assay_name == "Motility":
+        return "motility_fraction", "Relative motility (%)"
     return "response_fraction", "Response (%)"
 
 
@@ -207,6 +217,7 @@ def make_method_text(
     response_label: str,
     n_boot: int,
     dose_unit: str = "",
+    continuous_response: bool = False,
 ) -> str:
     bootstrap_sentence = (
         f"Bootstrap 95% confidence intervals for IC50 were estimated using {n_boot} within-group resamples. "
@@ -215,6 +226,11 @@ def make_method_text(
         else "Bootstrap confidence intervals were not requested, so fold-resistance confidence intervals may be unavailable. "
     )
     unit_sentence = f" Doses were interpreted in {dose_unit}." if dose_unit else ""
+    test_sentence = (
+        "Dose-level pairwise tests were reported as exploratory Mann-Whitney U tests with Benjamini-Hochberg and Bonferroni adjusted p-values."
+        if continuous_response
+        else "Dose-level pairwise tests were reported as exploratory Fisher exact tests with Benjamini-Hochberg and Bonferroni adjusted p-values. Fisher exact tests pooled counts across replicate wells at each dose and therefore do not model replicate-to-replicate overdispersion."
+    )
     return (
         f"Dose-response data were analyzed using ARStat. For the {assay_name.lower()} assay, "
         f"raw measurements were converted to {response_label.lower()} and modeled as a function of "
@@ -224,24 +240,27 @@ def make_method_text(
         "as the midpoint between the fitted lower and upper asymptotes of the model; therefore, IC50 is relative to the fitted response range and is not necessarily the dose giving 50% absolute response when the fitted top or bottom differs from 100% or 0%. "
         f"{bootstrap_sentence}"
         "Fold resistance was calculated by dividing each IC50 estimate by the IC50 of the user-selected susceptible/reference group. "
-        "Dose-level pairwise tests were reported as exploratory analyses with Benjamini-Hochberg and Bonferroni adjusted p-values. For count-based assays, Fisher exact tests pooled counts across replicate wells at each dose and therefore do not model replicate-to-replicate overdispersion."
+        f"{test_sentence}"
     )
 
 sample_options = {
     "Egg hatch example": "egg_hatch_example.csv",
     "Larval development example": "larval_development_example.csv",
+    "Motility example": "motility_example.csv",
     "Survival example": "survival_example.csv",
 }
 
 example_presets = {
     "Egg hatch example": {"assay": "Egg hatch", "reference": "WMD"},
     "Larval development example": {"assay": "Larval development", "reference": "WMD"},
+    "Motility example": {"assay": "Motility", "reference": "WMD"},
     "Survival example": {"assay": "Survival", "reference": "WMD"},
 }
 
 template_files = {
     "Egg hatch template": "egg_hatch_template.csv",
     "Larval development template": "larval_development_template.csv",
+    "Motility template": "motility_template.csv",
     "Survival template": "survival_template.csv",
     "Normalized XY single-dataset template": "normalized_xy_replicates_template.csv",
     "Normalized XY multi-group template": "normalized_xy_multigroup_template.csv",
@@ -308,7 +327,7 @@ if page == "Why ARStat / comparison":
     st.markdown(
         """
         ARStat is being built for a specific gap: parasitology labs often collect raw count data
-        from egg hatch assays, larval development assays, and mortality/survival assays,
+        from egg hatch, larval development, motility, and mortality/survival assays,
         but the analysis is commonly performed with a mixture of spreadsheets, general dose-response tools,
         and manually edited figures.
 
@@ -316,7 +335,7 @@ if page == "Why ARStat / comparison":
 
         ARStat converts raw assay measurements into a consistent, reproducible analysis workflow:
 
-        - assay-specific response calculations, such as hatch inhibition, development inhibition, or mortality
+        - assay-specific response calculations, such as hatch inhibition, development inhibition, motility inhibition, or mortality
         - automatic data checks for missing controls, too few dose levels, zero counts, and non-numeric dose entries
         - IC50 estimation with a four-parameter logistic model
         - resistance ratios relative to a selected susceptible/control isolate
@@ -370,6 +389,7 @@ if page == "How to / user guide":
         [
             {"Assay": "Egg hatch", "Required measurements": "L1 and eggs", "Default response": "Hatch inhibition = 1 - L1/(L1 + eggs)"},
             {"Assay": "Larval development", "Required measurements": "developed and undeveloped", "Default response": "Development inhibition = 1 - developed/(developed + undeveloped)"},
+            {"Assay": "Motility", "Required measurements": "One motility/activity value per replicate or well", "Default response": "Motility inhibition = 1 - measurement/mean zero-dose measurement"},
             {"Assay": "Survival", "Required measurements": "dead and alive", "Default response": "Mortality / affected fraction = dead/(dead + alive)"},
         ]
     )
@@ -477,16 +497,57 @@ if input_layout == "Raw assay measurements":
     dose_unit = st.sidebar.text_input(
         "Dose unit", value="µM", help="Used for plot labels and generated methods text."
     )
-    success_default = assay.get("success_default", cols[0])
-    failure_default = assay.get("failure_default", cols[0])
-    success_col = st.sidebar.selectbox(
-        assay.get("success_label", "Success count"), cols,
-        index=cols.index(default_col(success_default)) if success_default in cols else 0,
-    )
-    failure_col = st.sidebar.selectbox(
-        assay.get("failure_label", "Failure count"), cols,
-        index=cols.index(default_col(failure_default)) if failure_default in cols else 0,
-    )
+    if assay_name == "Motility":
+        motility_default = assay.get("measurement_default", "motility")
+        motility_col = st.sidebar.selectbox(
+            assay.get("measurement_label", "Motility / activity measurement"),
+            cols,
+            index=cols.index(default_col(motility_default)) if motility_default in cols else 0,
+        )
+        motility_scale_label = st.sidebar.selectbox(
+            "Motility value scale",
+            [
+                "Raw activity units (normalize to zero-dose control)",
+                "0–100 percent",
+                "0–1 fraction",
+            ],
+            index=0,
+            help=(
+                "Raw movement scores, velocities, distances, or instrument activity units are normalized "
+                "to the mean zero-dose control within each drug-by-group curve."
+            ),
+        )
+        motility_scale = {
+            "Raw activity units (normalize to zero-dose control)": "raw",
+            "0–100 percent": "percent",
+            "0–1 fraction": "fraction",
+        }[motility_scale_label]
+        if motility_scale == "raw":
+            motility_direction = "raw_outcome"
+            st.sidebar.caption("Raw activity values are interpreted as motility that decreases with dose.")
+        else:
+            motility_direction_label = st.sidebar.radio(
+                "Motility values represent",
+                [
+                    "Motility / activity (decreases with dose)",
+                    "Motility inhibition / affected response (increases with dose)",
+                ],
+                index=0,
+            )
+            motility_direction = (
+                "raw_outcome" if motility_direction_label.startswith("Motility / activity") else "effect"
+            )
+    else:
+        success_default = assay.get("success_default", cols[0])
+        failure_default = assay.get("failure_default", cols[0])
+        success_col = st.sidebar.selectbox(
+            assay.get("success_label", "Success count"), cols,
+            index=cols.index(default_col(success_default)) if success_default in cols else 0,
+        )
+        failure_col = st.sidebar.selectbox(
+            assay.get("failure_label", "Failure count"), cols,
+            index=cols.index(default_col(failure_default)) if failure_default in cols else 0,
+        )
     strain_values = sorted([str(v) for v in df[strain_col].dropna().unique()]) if strain_col in df.columns else []
 else:
     dose_col = st.sidebar.selectbox(
@@ -541,9 +602,15 @@ else:
         "Response scale", ["Auto-detect", "0–100 percent", "0–1 fraction"], index=0
     )
     normalized_scale = {"Auto-detect": "auto", "0–100 percent": "percent", "0–1 fraction": "fraction"}[normalized_scale_label]
+    raw_example = {
+        "Egg hatch": "% hatched",
+        "Larval development": "% developed",
+        "Survival": "% surviving",
+        "Motility": "% motility",
+    }.get(assay_name, "raw response")
     normalized_direction_label = st.sidebar.radio(
         "Imported response represents",
-        ["Raw outcome (e.g., % hatched; decreases with dose)", "Inhibition / affected response (increases with dose)"],
+        [f"Raw outcome (e.g., {raw_example}; decreases with dose)", "Inhibition / affected response (increases with dose)"],
         index=0,
     )
     normalized_direction = "raw_outcome" if normalized_direction_label.startswith("Raw outcome") else "effect"
@@ -572,7 +639,7 @@ plot_display = st.sidebar.radio(
         "Inhibition / affected response (ascending curve)",
     ],
     index=0,
-    help="The IC50 model is fit to inhibition/mortality. The traditional view displays the complementary raw assay outcome, such as hatch rate or survival, so the curve declines with increasing dose.",
+    help="The IC50 model is fit to inhibition/mortality. The traditional view displays the complementary raw assay outcome, such as hatch rate, motility, or survival, so the curve declines with increasing dose.",
 )
 
 preferred_ref = st.session_state.get("reference_group_select", None)
@@ -637,8 +704,15 @@ if input_layout == "Raw assay measurements":
         "include_drug_in_groups": include_drug_in_groups,
         "group_cols": group_cols,
     })
-    current_config["success_col"] = success_col
-    current_config["failure_col"] = failure_col
+    if assay_name == "Motility":
+        current_config.update({
+            "motility_col": motility_col,
+            "motility_scale": motility_scale,
+            "motility_direction": motility_direction,
+        })
+    else:
+        current_config["success_col"] = success_col
+        current_config["failure_col"] = failure_col
 else:
     current_config.update({
         "replicate_cols": tuple(replicate_cols),
@@ -667,6 +741,8 @@ def compute_arstat_results():
     working = df.copy()
     working[dose_col] = pd.to_numeric(working[dose_col], errors="coerce")
 
+    continuous_response = input_layout == "Normalized XY replicate table" or assay_name == "Motility"
+
     if input_layout == "Normalized XY replicate table":
         analysis_df, response_warnings = prepare_normalized_xy_response(
             working,
@@ -682,6 +758,16 @@ def compute_arstat_results():
             response_direction=normalized_direction,
         )
         analysis_dose_col = "dose"
+    elif assay_name == "Motility":
+        analysis_df, response_warnings = prepare_motility_response(
+            working,
+            dose_col=dose_col,
+            motility_col=motility_col,
+            group_cols=group_cols,
+            value_scale=motility_scale,
+            response_direction=motility_direction,
+        )
+        analysis_dose_col = dose_col
     else:
         analysis_df, response_warnings = calculate_count_response(
             working,
@@ -698,9 +784,13 @@ def compute_arstat_results():
         "Zero-dose controls are included in model fitting and summary tables. Because log-scale plots cannot display a true dose of 0, zero-dose controls are shown at a symbolic left-edge tick labelled 0.",
         "Pairwise dose-level tests are exploratory. Raw p-values are reported together with Benjamini-Hochberg and Bonferroni adjusted p-values.",
     ]
-    if input_layout == "Raw assay measurements":
+    if not continuous_response:
         statistical_notes.append(
             "For count-based assays, Fisher exact tests pool replicate counts at each dose. This approach does not model replicate-to-replicate overdispersion and may be anticonservative when wells are highly variable."
+        )
+    else:
+        statistical_notes.append(
+            "Continuous replicate responses are compared at each dose using exploratory Mann-Whitney U tests. For raw motility measurements, each value is normalized to its fitted group's mean zero-dose control before analysis."
         )
     statistical_notes.append(
         "IC50 values are estimated from the fitted dose-response curve and represent the dose corresponding to the midpoint between the fitted lower and upper asymptotes. Therefore, if the maximum fitted response is below 100%, the IC50 is not necessarily the dose producing an absolute 50% response."
@@ -711,7 +801,7 @@ def compute_arstat_results():
         group_cols=group_cols,
         dose_col=analysis_dose_col,
         response_col="response_fraction",
-        total_col=("total_count" if input_layout == "Raw assay measurements" else None),
+        total_col=("total_count" if not continuous_response else None),
         n_boot=n_boot,
     )
 
@@ -746,7 +836,7 @@ def compute_arstat_results():
             rr_message = f"Resistance ratios could not be calculated: {exc}"
 
     try:
-        if input_layout == "Normalized XY replicate table":
+        if continuous_response:
             test_table = pairwise_continuous_tests(
                 analysis_df,
                 comparison_col=strain_col,
@@ -794,6 +884,7 @@ def compute_arstat_results():
         response_label=assay.get("effect_label", "response"),
         n_boot=n_boot,
         dose_unit=dose_unit,
+        continuous_response=continuous_response,
     )
     if input_layout == "Normalized XY replicate table":
         methods_text += (
@@ -802,6 +893,18 @@ def compute_arstat_results():
             "reshaped the table to long format, fitted one curve per drug-by-group combination, and calculated "
             "dose-level means, standard deviations, and sample sizes from the replicate values."
         )
+    elif assay_name == "Motility":
+        if motility_scale == "raw":
+            methods_text += (
+                " Raw motility/activity measurements were normalized separately within each fitted drug-by-group "
+                "combination by dividing each replicate value by the mean zero-dose control. Motility inhibition "
+                "was calculated as one minus relative motility."
+            )
+        else:
+            methods_text += (
+                " Motility responses were supplied as normalized replicate-level values and converted to motility "
+                "inhibition according to the selected response direction."
+            )
 
     all_tables = {
         "prepared_data": analysis_df,
@@ -833,6 +936,7 @@ def compute_arstat_results():
         "dose_levels": analysis_df[analysis_dose_col].nunique(),
         "response_label": response_label,
         "plot_mode": plot_mode,
+        "continuous_response": continuous_response,
     }
 
 
@@ -884,10 +988,16 @@ def render_arstat_results(results: dict):
     st.dataframe(results["dose_summary"], width='stretch')
 
     st.markdown("### Pairwise per-dose tests")
-    st.info(
-        "These tests are exploratory. Use the adjusted p-values for multiple comparisons. "
-        "For count-based assays, Fisher exact tests pool replicate wells at each dose and do not model overdispersion."
-    )
+    if results.get("continuous_response"):
+        st.info(
+            "These tests are exploratory Mann-Whitney U comparisons of replicate responses at each dose. "
+            "Use the adjusted p-values for multiple comparisons."
+        )
+    else:
+        st.info(
+            "These tests are exploratory. Use the adjusted p-values for multiple comparisons. "
+            "For count-based assays, Fisher exact tests pool replicate wells at each dose and do not model overdispersion."
+        )
     if results["test_message"]:
         st.info(results["test_message"])
     st.dataframe(results["test_table"], width='stretch')
@@ -966,4 +1076,4 @@ if stored_config != current_config:
 if stored_results is not None:
     render_arstat_results(stored_results)
 
-st.caption("ARStat v1.0.0-rc1. Example datasets use illustrative hookworm assay data; downloads reuse stored results.")
+st.caption("ARStat v1.2.0. Example datasets use illustrative hookworm assay data; downloads reuse stored results.")

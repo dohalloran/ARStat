@@ -45,6 +45,13 @@ ASSAY_PRESETS = {
         "effect_fraction": "mortality_fraction",
         "effect_label": "Mortality / affected fraction",
     },
+    "Motility": {
+        "measurement_default": "motility",
+        "measurement_label": "Motility / activity measurement",
+        "raw_fraction": "motility_fraction",
+        "effect_fraction": "motility_inhibition_fraction",
+        "effect_label": "Motility inhibition",
+    },
 }
 
 
@@ -109,6 +116,8 @@ def calculate_count_response(
     assay_name: str,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Calculate count-based fractions for egg hatch, LDA, or survival assays."""
+    if assay_name == "Motility":
+        raise ValueError("Motility is a continuous-response assay; use prepare_motility_response().")
     warnings = validate_common_columns(df, [success_col, failure_col])
     out = coerce_numeric(df, [success_col, failure_col])
 
@@ -142,6 +151,128 @@ def calculate_count_response(
 
     out["response_fraction"] = out[effect_fraction].clip(0, 1)
     out["response_percent"] = out["response_fraction"] * 100
+    return out, warnings
+
+
+def prepare_motility_response(
+    df: pd.DataFrame,
+    dose_col: str,
+    motility_col: str,
+    group_cols: list[str],
+    value_scale: str = "raw",
+    response_direction: str = "raw_outcome",
+) -> tuple[pd.DataFrame, list[str]]:
+    """Prepare long-format motility measurements for IC50 fitting.
+
+    Parameters
+    ----------
+    value_scale
+        ``"raw"`` normalizes each observation to the mean zero-dose motility
+        within its fitted group. ``"percent"`` treats values as 0--100 and
+        ``"fraction"`` treats values as 0--1.
+    response_direction
+        ``"raw_outcome"`` means higher values represent greater motility and
+        motility declines with dose. ``"effect"`` means imported values already
+        represent motility inhibition or affected response.
+    """
+    required = [dose_col, motility_col] + list(group_cols)
+    warnings = validate_common_columns(df, required)
+    out = coerce_numeric(df, [dose_col, motility_col])
+
+    before = len(out)
+    out = out.dropna(subset=[dose_col, motility_col]).copy()
+    removed = before - len(out)
+    if removed:
+        warnings.append(f"{removed} rows with missing or non-numeric dose/motility values were omitted.")
+    if out.empty:
+        raise ValueError("No usable motility measurements were found.")
+    if (out[dose_col] < 0).any():
+        raise ValueError("Dose values cannot be negative.")
+
+    out["motility_measurement"] = out[motility_col].astype(float)
+
+    if value_scale == "raw":
+        if (out["motility_measurement"] < 0).any():
+            raise ValueError("Raw motility/activity measurements cannot be negative.")
+
+        control = out.loc[out[dose_col] == 0].copy()
+        if control.empty:
+            raise ValueError(
+                "Raw motility measurements require at least one zero-dose control in every fitted group."
+            )
+        control_means = (
+            control.groupby(group_cols, dropna=False)["motility_measurement"]
+            .mean()
+            .rename("control_mean_motility")
+            .reset_index()
+        )
+        invalid_control = ~np.isfinite(control_means["control_mean_motility"]) | (
+            control_means["control_mean_motility"] <= 0
+        )
+        if invalid_control.any():
+            bad = control_means.loc[invalid_control, group_cols].astype(str).agg(" | ".join, axis=1)
+            raise ValueError(
+                "Zero-dose mean motility must be positive for every fitted group. Invalid groups: "
+                + ", ".join(bad.tolist())
+            )
+
+        out = out.merge(control_means, on=group_cols, how="left", validate="many_to_one")
+        missing_control = out["control_mean_motility"].isna()
+        if missing_control.any():
+            missing_groups = (
+                out.loc[missing_control, group_cols]
+                .drop_duplicates()
+                .astype(str)
+                .agg(" | ".join, axis=1)
+                .tolist()
+            )
+            raise ValueError(
+                "Raw motility measurements require a zero-dose control for every fitted group. Missing groups: "
+                + ", ".join(missing_groups)
+            )
+        imported_fraction = out["motility_measurement"] / out["control_mean_motility"]
+        warnings.append("Raw motility measurements were normalized to the mean zero-dose control within each fitted group.")
+    elif value_scale == "percent":
+        out["control_mean_motility"] = np.nan
+        imported_fraction = out["motility_measurement"] / 100.0
+    elif value_scale == "fraction":
+        out["control_mean_motility"] = np.nan
+        imported_fraction = out["motility_measurement"]
+    else:
+        raise ValueError("value_scale must be 'raw', 'percent', or 'fraction'.")
+
+    if response_direction not in {"raw_outcome", "effect"}:
+        raise ValueError("response_direction must be 'raw_outcome' or 'effect'.")
+
+    out["normalized_input_fraction"] = imported_fraction.astype(float)
+    if (out["normalized_input_fraction"] < 0).any():
+        raise ValueError("Motility/activity values cannot be negative after scaling or normalization.")
+
+    if response_direction == "raw_outcome":
+        raw = out["normalized_input_fraction"]
+        above_control = raw > 1
+        if above_control.any():
+            warnings.append(
+                f"{int(above_control.sum())} relative motility values exceeded the zero-dose mean (100%). "
+                "They were retained because they may reflect hypermotility or ordinary replicate variation."
+            )
+        effect = 1 - raw
+    else:
+        outside = ~out["normalized_input_fraction"].between(0, 1)
+        if outside.any():
+            warnings.append(
+                f"{int(outside.sum())} imported motility-inhibition values fell outside 0-1 and were clipped; "
+                "inspect these cells."
+            )
+            out["normalized_input_fraction"] = out["normalized_input_fraction"].clip(0, 1)
+        effect = out["normalized_input_fraction"]
+        raw = 1 - effect
+
+    out["motility_fraction"] = raw
+    out["motility_inhibition_fraction"] = effect
+    out["response_fraction"] = out["motility_inhibition_fraction"]
+    out["response_percent"] = out["response_fraction"] * 100
+    out["raw_outcome_percent"] = out["motility_fraction"] * 100
     return out, warnings
 
 
@@ -228,26 +359,39 @@ def prepare_normalized_xy_response(
     else:
         raise ValueError("value_scale must be 'auto', 'percent', or 'fraction'.")
 
-    outside = ~long["normalized_input_fraction"].between(0, 1)
-    if outside.any():
-        warnings.append(
-            f"{int(outside.sum())} normalized values fell outside 0-1 after scaling and were clipped; inspect these cells."
-        )
-        long["normalized_input_fraction"] = long["normalized_input_fraction"].clip(0, 1)
-
     if response_direction not in {"raw_outcome", "effect"}:
         raise ValueError("response_direction must be 'raw_outcome' or 'effect'.")
-    if response_direction == "raw_outcome":
+
+    if assay_name == "Motility" and response_direction == "raw_outcome":
+        if (long["normalized_input_fraction"] < 0).any():
+            raise ValueError("Motility/activity values cannot be negative after scaling.")
+        above_control = long["normalized_input_fraction"] > 1
+        if above_control.any():
+            warnings.append(
+                f"{int(above_control.sum())} relative motility values exceeded 100% and were retained because "
+                "they may reflect hypermotility or replicate variation."
+            )
         raw = long["normalized_input_fraction"]
         effect = 1 - raw
     else:
-        effect = long["normalized_input_fraction"]
-        raw = 1 - effect
+        outside = ~long["normalized_input_fraction"].between(0, 1)
+        if outside.any():
+            warnings.append(
+                f"{int(outside.sum())} normalized values fell outside 0-1 after scaling and were clipped; inspect these cells."
+            )
+            long["normalized_input_fraction"] = long["normalized_input_fraction"].clip(0, 1)
+        if response_direction == "raw_outcome":
+            raw = long["normalized_input_fraction"]
+            effect = 1 - raw
+        else:
+            effect = long["normalized_input_fraction"]
+            raw = 1 - effect
 
     raw_col = {
         "Egg hatch": "hatch_fraction",
         "Larval development": "development_fraction",
         "Survival": "survival_fraction",
+        "Motility": "motility_fraction",
     }[assay_name]
     effect_col = ASSAY_PRESETS[assay_name]["effect_fraction"]
 
@@ -274,11 +418,19 @@ def prepare_normalized_xy_response(
 
     long["unit"] = unit
     long["assay"] = assay_name
-    long[raw_col] = raw.clip(0, 1)
-    long[effect_col] = effect.clip(0, 1)
-    if assay_name == "Survival":
-        long["mortality_fraction"] = effect.clip(0, 1)
-    long["response_fraction"] = effect.clip(0, 1)
+    if assay_name == "Motility" and response_direction == "raw_outcome":
+        long[raw_col] = raw
+        long[effect_col] = effect
+        long["motility_inhibition_fraction"] = effect
+        long["response_fraction"] = effect
+    else:
+        long[raw_col] = raw.clip(0, 1)
+        long[effect_col] = effect.clip(0, 1)
+        if assay_name == "Survival":
+            long["mortality_fraction"] = effect.clip(0, 1)
+        if assay_name == "Motility":
+            long["motility_inhibition_fraction"] = effect.clip(0, 1)
+        long["response_fraction"] = effect.clip(0, 1)
     long["response_percent"] = long["response_fraction"] * 100
     long["raw_outcome_percent"] = long[raw_col] * 100
     return long, warnings

@@ -8,6 +8,7 @@ from arstat_core import (
     four_parameter_logistic,
     pairwise_count_tests,
     pairwise_continuous_tests,
+    prepare_motility_response,
     prepare_normalized_xy_response,
     summarize_by_dose,
 )
@@ -64,6 +65,72 @@ def test_survival_workflow():
     assert warnings == []
     assert prepared["response_fraction"].between(0, 1).all()
     _assert_basic_fit(prepared, group_cols=["drug", "strain"])
+
+
+def test_motility_workflow_normalizes_to_group_controls_and_fits_ic50():
+    df = pd.read_csv("sample_data/motility_example.csv")
+    prepared, warnings = prepare_motility_response(
+        df,
+        dose_col="dose",
+        motility_col="motility",
+        group_cols=["drug", "strain"],
+        value_scale="raw",
+        response_direction="raw_outcome",
+    )
+    assert any("normalized to the mean zero-dose control" in warning for warning in warnings)
+    assert "motility_fraction" in prepared.columns
+    assert "motility_inhibition_fraction" in prepared.columns
+    zero = prepared.loc[prepared["dose"] == 0].groupby("strain")["motility_fraction"].mean()
+    assert np.allclose(zero.to_numpy(), 1.0)
+    high = prepared.loc[prepared["dose"] == prepared["dose"].max()].groupby("strain")["response_fraction"].mean()
+    assert (high > 0.65).all()
+    summary, _ = _assert_basic_fit(prepared, group_cols=["drug", "strain"])
+    assert (summary["top"] > summary["bottom"]).all()
+
+
+
+def test_motility_hypermotility_is_retained_not_clipped():
+    df = pd.DataFrame(
+        {
+            "strain": ["WT"] * 8,
+            "drug": ["Drug"] * 8,
+            "dose": [0, 0, 1, 1, 10, 10, 100, 100],
+            "motility": [90, 110, 120, 105, 55, 50, 5, 8],
+        }
+    )
+    prepared, warnings = prepare_motility_response(
+        df,
+        dose_col="dose",
+        motility_col="motility",
+        group_cols=["drug", "strain"],
+        value_scale="raw",
+        response_direction="raw_outcome",
+    )
+    assert prepared["motility_fraction"].max() > 1.0
+    assert prepared["response_fraction"].min() < 0.0
+    assert any("were retained" in warning for warning in warnings)
+
+def test_motility_raw_values_require_zero_dose_control_per_group():
+    df = pd.DataFrame(
+        {
+            "strain": ["WT"] * 4,
+            "drug": ["Drug"] * 4,
+            "dose": [1, 3, 10, 30],
+            "motility": [100, 80, 40, 10],
+        }
+    )
+    try:
+        prepare_motility_response(
+            df,
+            dose_col="dose",
+            motility_col="motility",
+            group_cols=["drug", "strain"],
+            value_scale="raw",
+        )
+    except ValueError as exc:
+        assert "zero-dose control" in str(exc)
+    else:
+        raise AssertionError("Expected raw motility preparation to require a zero-dose control.")
 
 
 def test_count_pairwise_tests_include_multiple_testing_adjustment():
@@ -273,3 +340,46 @@ def test_normalized_xy_multigroup_allows_group_without_drug_column():
     assert set(prepared["strain"]) == {"WT", "Mutant"}
     assert set(prepared["drug"]) == {"IVM"}
     assert prepared["development_fraction"].between(0, 1).all()
+
+
+def test_normalized_xy_motility_and_continuous_pairwise_tests():
+    wide = pd.DataFrame(
+        {
+            "Group": ["WMD"] * 5 + ["KGR"] * 5,
+            "Drug": ["IVM"] * 10,
+            "Dose": [0, 3, 10, 30, 100] * 2,
+            "Rep1": [105, 92, 70, 25, 3, 102, 99, 92, 67, 18],
+            "Rep2": [98, 90, 68, 22, 2, 99, 98, 90, 65, 15],
+            "Rep3": [100, 91, 69, 24, 4, 101, 97, 91, 66, 16],
+        }
+    )
+    prepared, warnings = prepare_normalized_xy_response(
+        wide,
+        dose_col="Dose",
+        replicate_cols=["Rep1", "Rep2", "Rep3"],
+        assay_name="Motility",
+        group_col="Group",
+        drug_col="Drug",
+        unit="nM",
+        value_scale="percent",
+        response_direction="raw_outcome",
+    )
+    assert prepared["motility_fraction"].max() > 1.0
+    assert prepared["response_fraction"].min() < 0.0
+    assert any("were retained" in warning for warning in warnings)
+    summary, _ = fit_dose_response(
+        prepared,
+        group_cols=["drug", "strain"],
+        dose_col="dose",
+        total_col=None,
+    )
+    assert summary["converged"].all()
+    tests = pairwise_continuous_tests(
+        prepared,
+        comparison_col="strain",
+        dose_col="dose",
+        response_col="response_fraction",
+        stratify_cols=["drug"],
+    )
+    assert not tests.empty
+    assert {"p_value", "p_value_bh", "p_value_bonferroni"}.issubset(tests.columns)
