@@ -1,4 +1,4 @@
-# ARStat v1.2.0
+# ARStat v1.2.1
 
 [![Tests](https://github.com/dohalloran/ARStat/actions/workflows/tests.yml/badge.svg)](https://github.com/dohalloran/ARStat/actions/workflows/tests.yml)
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://arstat-jm7varr6fck8uajj4lgs6t.streamlit.app/)
@@ -81,7 +81,7 @@ KGR,TBZ,0,100,100,99
 KGR,TBZ,0.5,98,96,97
 ```
 
-ARStat maps the selected experimental-group column to its backward-compatible internal `strain` field and fits one curve per drug-by-group combination. Values may be entered as percentages (`0–100`) or fractions (`0–1`). ARStat reshapes the table internally and calculates the mean, standard deviation, and sample size. Do not import precomputed means, medians, standard deviations, or sample sizes. CSV and XLSX files are supported.
+ARStat maps the selected experimental-group column to its backward-compatible internal `strain` field and fits one curve per drug-by-group combination. Values may be entered as percentages (`0–100`) or fractions (`0–1`). Values below 0% or above 100% are flagged but retained rather than clipped, because control normalization, background correction, or replicate variation can legitimately produce out-of-range observations. ARStat reshapes the table internally and calculates the mean, standard deviation, and sample size. Do not import precomputed means, medians, standard deviations, or sample sizes. CSV and XLSX files are supported.
 
 ## Reproducibility and validation
 
@@ -130,14 +130,14 @@ Benchmark outputs are written to `benchmarks/`. Example validation outputs are w
 
 ## Required columns
 
-For raw assay measurements, files should include `strain`, `drug`, `dose`, `unit`, and `replicate`, or equivalent columns that can be mapped in the interface.
+For raw assay measurements, the minimum required fields are a strain/isolate or other group column, a dose column, and the assay response measurements. Drug, dose-unit, and replicate/well identifiers are optional interface mappings or metadata.
 
 For normalized XY input, only a dose column and individual replicate response columns are required. Experimental-group and drug columns are optional.
 
 Assay-specific raw columns:
 
 - Egg hatch: `eggs`, `L1`
-- Larval development: `developed`, `undeveloped`
+- Larval development: `developed`, `undeveloped`; conventional `L3` and `L1` headings are suggested as developed and undeveloped, respectively, but must be confirmed against the protocol
 - Motility: one continuous activity or motility column, such as `motility`
 - Survival/mortality: `alive`, `dead`
 

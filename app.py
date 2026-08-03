@@ -16,15 +16,18 @@ import streamlit as st
 
 from arstat_core import (
     ASSAY_PRESETS,
+    INFO_PREFIX,
     assay_warnings,
     calculate_count_response,
     calculate_resistance_ratios,
+    drop_entirely_empty_columns,
     fit_dose_response,
     four_parameter_logistic,
     pairwise_continuous_tests,
     pairwise_count_tests,
     prepare_motility_response,
     prepare_normalized_xy_response,
+    suggest_count_columns,
     summarize_by_dose,
 )
 
@@ -454,6 +457,8 @@ else:
     df = read_uploaded_table(uploaded)
     st.session_state["last_sample_label"] = None
 
+df, upload_cleanup_notes = drop_entirely_empty_columns(df)
+
 download_panel = st.sidebar.expander("Download sample data/templates", expanded=False)
 show_download_library(location=download_panel)
 
@@ -464,6 +469,9 @@ if df.empty:
 if len(cols) != len(set(cols)):
     duplicated = sorted({c for c in cols if cols.count(c) > 1})
     st.error(f"Duplicate column names detected: {duplicated}. Please rename duplicate columns before analysis.")
+    st.stop()
+if not cols:
+    st.error("No usable columns remain after removing entirely empty columns.")
     st.stop()
 
 st.sidebar.header("2. Assay settings")
@@ -478,6 +486,8 @@ def default_col(name: str, fallback_index: int = 0) -> str:
     if name in cols:
         return name
     return cols[fallback_index] if cols else ""
+
+mapping_error = ""
 
 if input_layout == "Raw assay measurements":
     strain_col = st.sidebar.selectbox(
@@ -540,14 +550,32 @@ if input_layout == "Raw assay measurements":
     else:
         success_default = assay.get("success_default", cols[0])
         failure_default = assay.get("failure_default", cols[0])
+        suggested_success, suggested_failure = suggest_count_columns(cols, assay_name)
+        success_choice = suggested_success or (success_default if success_default in cols else cols[0])
+        if suggested_failure:
+            failure_choice = suggested_failure
+        elif failure_default in cols and failure_default != success_choice:
+            failure_choice = failure_default
+        else:
+            failure_choice = next((c for c in cols if c != success_choice), success_choice)
         success_col = st.sidebar.selectbox(
             assay.get("success_label", "Success count"), cols,
-            index=cols.index(default_col(success_default)) if success_default in cols else 0,
+            index=cols.index(success_choice),
         )
         failure_col = st.sidebar.selectbox(
             assay.get("failure_label", "Failure count"), cols,
-            index=cols.index(default_col(failure_default)) if failure_default in cols else 0,
+            index=cols.index(failure_choice),
         )
+        if assay_name == "Larval development" and suggested_success and suggested_failure:
+            st.sidebar.caption(
+                f"Suggested LDA mapping: **{suggested_success}** = developed and **{suggested_failure}** = undeveloped. "
+                "Confirm this matches the experimental protocol before running."
+            )
+        if success_col == failure_col:
+            mapping_error = (
+                "Select different columns for the two assay outcomes. ARStat will not run while the same column "
+                "is mapped to both measurements."
+            )
     strain_values = sorted([str(v) for v in df[strain_col].dropna().unique()]) if strain_col in df.columns else []
 else:
     dose_col = st.sidebar.selectbox(
@@ -667,7 +695,14 @@ if reference_group == "None":
 if not reference_group and len(strain_values) > 1:
     st.sidebar.info("Select a susceptible/control reference strain to calculate fold resistance.")
 
-run_button = st.sidebar.button("Run ARStat", key="run_arstat_btn", type="primary")
+if mapping_error:
+    st.sidebar.error(mapping_error)
+run_button = st.sidebar.button(
+    "Run ARStat",
+    key="run_arstat_btn",
+    type="primary",
+    disabled=bool(mapping_error),
+)
 if st.sidebar.button("Clear stored results", key="clear_results_btn"):
     st.session_state.pop("arstat_results", None)
     st.session_state.pop("arstat_config", None)
@@ -726,6 +761,8 @@ else:
 
 st.subheader("Input preview")
 st.caption(f"Loaded {len(df):,} rows and {len(df.columns):,} columns. Confirm column mappings in the sidebar before running the analysis.")
+for cleanup_note in upload_cleanup_notes:
+    st.info(cleanup_note)
 if source == "Use example data":
     st.success(f"Loaded {sample_label}. Assay settings were set to **{assay_name}** automatically. The bundled examples are illustrative hookworm-style sample data, not primary experimental measurements.")
 st.dataframe(df.head(20), width='stretch')
@@ -777,8 +814,17 @@ def compute_arstat_results():
         )
         analysis_dose_col = dose_col
 
+    response_notes = [
+        message[len(INFO_PREFIX):]
+        for message in response_warnings
+        if str(message).startswith(INFO_PREFIX)
+    ]
+    response_warnings = [
+        message for message in response_warnings if not str(message).startswith(INFO_PREFIX)
+    ]
     validation_warnings = assay_warnings(analysis_df, group_cols=group_cols, dose_col=analysis_dose_col)
     all_warnings = response_warnings + validation_warnings
+    all_errors: list[str] = []
 
     statistical_notes = [
         "Zero-dose controls are included in model fitting and summary tables. Because log-scale plots cannot display a true dose of 0, zero-dose controls are shown at a symbolic left-edge tick labelled 0.",
@@ -812,7 +858,12 @@ def compute_arstat_results():
         ]
         for _, row in decreasing_fit_messages.iterrows():
             label = ", ".join(str(row[col]) for col in group_cols)
-            all_warnings.append(f"{label}: {row['message']}")
+            all_errors.append(
+                f"{label}: the fitted inhibition/affected-response curve decreases with dose. This commonly means "
+                "the response columns or response direction are reversed. A complemented response can produce nearly "
+                "the same IC50 midpoint, so do not interpret this IC50 until the mapping is corrected. Technical detail: "
+                f"{row['message']}"
+            )
 
     dose_summary = summarize_by_dose(
         analysis_df,
@@ -926,6 +977,8 @@ def compute_arstat_results():
         "test_table": test_table,
         "test_message": test_message,
         "all_warnings": all_warnings,
+        "all_errors": all_errors,
+        "response_notes": response_notes,
         "statistical_notes": statistical_notes,
         "methods_text": methods_text,
         "plot_png": plot_png,
@@ -941,6 +994,16 @@ def compute_arstat_results():
 
 
 def render_arstat_results(results: dict):
+    if results.get("response_notes"):
+        with st.expander("Input interpretation notes", expanded=False):
+            for note in results["response_notes"]:
+                st.info(note)
+
+    if results.get("all_errors"):
+        with st.expander("Errors requiring review", expanded=True):
+            for error in results["all_errors"]:
+                st.error(error)
+
     if results["all_warnings"]:
         with st.expander("Data checks and warnings", expanded=True):
             for warning in results["all_warnings"]:
@@ -1076,4 +1139,4 @@ if stored_config != current_config:
 if stored_results is not None:
     render_arstat_results(stored_results)
 
-st.caption("ARStat v1.2.0. Example datasets use illustrative hookworm assay data; downloads reuse stored results.")
+st.caption("ARStat v1.2.1. Example datasets use illustrative hookworm assay data; downloads reuse stored results.")

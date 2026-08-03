@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.2.1 — normalized input and column-mapping safeguards
+
+- Retain normalized replicate values below 0% or above 100% instead of clipping them before curve fitting.
+- Improved automatic percentage-versus-fraction detection so a single modest outlier does not rescale an entire fractional dataset.
+- Display automatic scale detection as an informational note rather than a warning in the Streamlit interface.
+- Added a warning when only one normalized replicate column is selected.
+- Added conservative assay-column aliases, including an LDA suggestion of `L3` as developed and `L1` as undeveloped, while requiring user confirmation.
+- Prevented the same count column from being mapped to both assay outcomes.
+- Elevated decreasing inhibition/mortality fits to an error requiring review and explained why complemented responses can retain a similar IC50 midpoint.
+- Clarified that fewer than four unique dose levels prevents 4PL IC50 calculation rather than merely making it unstable.
+- Automatically remove entirely empty upload columns, including blank `Unnamed:` spreadsheet-export columns.
+- Added seven regression tests for these safeguards; the suite now contains 23 tests.
+
 ## v1.2.0 — motility IC50 workflow restored
 
 - Restored motility as a fully supported fourth assay workflow while retaining survival/mortality.

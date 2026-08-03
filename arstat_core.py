@@ -17,6 +17,9 @@ from scipy.optimize import curve_fit
 from scipy.stats import fisher_exact, mannwhitneyu, ttest_ind
 
 
+INFO_PREFIX = "INFO: "
+
+
 ASSAY_PRESETS = {
     "Egg hatch": {
         "success_default": "L1",
@@ -51,6 +54,22 @@ ASSAY_PRESETS = {
         "raw_fraction": "motility_fraction",
         "effect_fraction": "motility_inhibition_fraction",
         "effect_label": "Motility inhibition",
+    },
+}
+
+
+ASSAY_COLUMN_ALIASES = {
+    "Egg hatch": {
+        "success": ["l1", "hatched", "hatched larvae", "larvae", "hatch"],
+        "failure": ["eggs", "unhatched eggs", "unhatched", "egg"],
+    },
+    "Larval development": {
+        "success": ["developed", "developed larvae", "l3", "l3 larvae", "infective larvae"],
+        "failure": ["undeveloped", "undeveloped larvae", "l1", "l2", "l1 l2", "early larvae"],
+    },
+    "Survival": {
+        "success": ["dead", "affected", "nonviable", "non viable"],
+        "failure": ["alive", "unaffected", "viable", "surviving"],
     },
 }
 
@@ -109,6 +128,54 @@ def validate_common_columns(df: pd.DataFrame, columns: Iterable[str]) -> list[st
     return warnings
 
 
+def _canonical_column_name(value: object) -> str:
+    """Normalize a column label for conservative alias matching."""
+    text = str(value).strip().lower()
+    return " ".join("".join(ch if ch.isalnum() else " " for ch in text).split())
+
+
+def suggest_count_columns(columns: Iterable[str], assay_name: str) -> tuple[Optional[str], Optional[str]]:
+    """Suggest assay count columns without overriding user confirmation.
+
+    Matching is intentionally conservative and based on exact normalized aliases.
+    In particular, ``L3`` is suggested as developed and ``L1`` as undeveloped for
+    conventional larval-development assays, but the app still exposes both choices
+    so investigators can confirm protocol-specific definitions.
+    """
+    aliases = ASSAY_COLUMN_ALIASES.get(assay_name)
+    if not aliases:
+        return None, None
+
+    column_list = list(columns)
+    normalized = {_canonical_column_name(col): col for col in column_list}
+
+    def first_match(candidates: Iterable[str], excluded: Optional[str] = None) -> Optional[str]:
+        for candidate in candidates:
+            match = normalized.get(_canonical_column_name(candidate))
+            if match is not None and match != excluded:
+                return match
+        return None
+
+    success = first_match(aliases["success"])
+    failure = first_match(aliases["failure"], excluded=success)
+    return success, failure
+
+
+def drop_entirely_empty_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Remove columns containing no usable values and report what was removed."""
+    empty_cols = []
+    for col in df.columns:
+        series = df[col]
+        nonempty = series.notna() & series.astype(str).str.strip().ne("")
+        if not nonempty.any():
+            empty_cols.append(col)
+    if not empty_cols:
+        return df.copy(), []
+    cleaned = df.drop(columns=empty_cols).copy()
+    note = f"Removed {len(empty_cols)} entirely empty column(s): {', '.join(map(str, empty_cols))}."
+    return cleaned, [note]
+
+
 def calculate_count_response(
     df: pd.DataFrame,
     success_col: str,
@@ -118,6 +185,11 @@ def calculate_count_response(
     """Calculate count-based fractions for egg hatch, LDA, or survival assays."""
     if assay_name == "Motility":
         raise ValueError("Motility is a continuous-response assay; use prepare_motility_response().")
+    if success_col == failure_col:
+        raise ValueError(
+            "The affected/success and unaffected/failure measurements must use different columns. "
+            "Confirm the assay column mapping before analysis."
+        )
     warnings = validate_common_columns(df, [success_col, failure_col])
     out = coerce_numeric(df, [success_col, failure_col])
 
@@ -261,10 +333,9 @@ def prepare_motility_response(
         outside = ~out["normalized_input_fraction"].between(0, 1)
         if outside.any():
             warnings.append(
-                f"{int(outside.sum())} imported motility-inhibition values fell outside 0-1 and were clipped; "
-                "inspect these cells."
+                f"{int(outside.sum())} imported motility-inhibition values fell outside 0-1 and were retained. "
+                "This can occur after control normalization or background correction; inspect these cells."
             )
-            out["normalized_input_fraction"] = out["normalized_input_fraction"].clip(0, 1)
         effect = out["normalized_input_fraction"]
         raw = 1 - effect
 
@@ -307,9 +378,9 @@ def prepare_normalized_xy_response(
         Optional column identifying the drug. When omitted, ``drug_label`` is
         applied to all rows.
     value_scale
-        ``"auto"`` detects percentages when any finite response exceeds 1.5;
-        ``"percent"`` divides values by 100; ``"fraction"`` leaves them on
-        the 0--1 scale.
+        ``"auto"`` uses the overall magnitude of the imported values to
+        distinguish percentages from fractions; ``"percent"`` divides values
+        by 100; ``"fraction"`` leaves them on the 0--1 scale.
     response_direction
         ``"raw_outcome"`` means hatch, development, or survival decreases as dose increases. ``"effect"`` means the imported
         values already represent inhibition, mortality, or affected response.
@@ -322,6 +393,11 @@ def prepare_normalized_xy_response(
     warnings = validate_common_columns(df, required)
     if not replicate_cols:
         raise ValueError("Select at least one replicate response column.")
+    if len(replicate_cols) == 1:
+        warnings.append(
+            "Only one replicate response column was selected. ARStat can fit the curve, but dose-level "
+            "variation and replicate-based comparisons cannot be estimated reliably."
+        )
     overlap = set(replicate_cols).intersection(id_cols)
     if overlap:
         raise ValueError(f"Columns cannot be used as both identifiers and replicates: {sorted(overlap)}")
@@ -348,9 +424,25 @@ def prepare_normalized_xy_response(
     finite = long["imported_response"].to_numpy(dtype=float)
     scale = value_scale
     if scale == "auto":
-        scale = "percent" if np.nanmax(np.abs(finite)) > 1.5 else "fraction"
+        max_abs = float(np.nanmax(np.abs(finite)))
+        median_abs = float(np.nanmedian(np.abs(finite)))
+        if max_abs <= 1.5:
+            scale = "fraction"
+            detection_detail = "all values were compatible with a 0-1 fraction scale"
+        elif max_abs >= 5 or median_abs > 1.5:
+            scale = "percent"
+            detection_detail = "the overall response magnitude was consistent with percentages"
+        else:
+            scale = "fraction"
+            detection_detail = (
+                "values between 1.5 and 5 are ambiguous, so ARStat conservatively assumed fractions; "
+                "select the scale manually if these are percentages"
+            )
         warnings.append(
-            f"Normalized response scale was detected as {'0-100 percent' if scale == 'percent' else '0-1 fraction'}."
+            INFO_PREFIX
+            + f"Normalized response scale was detected as {'0-100 percent' if scale == 'percent' else '0-1 fraction'}; "
+            + detection_detail
+            + "."
         )
     if scale == "percent":
         long["normalized_input_fraction"] = long["imported_response"] / 100.0
@@ -362,30 +454,34 @@ def prepare_normalized_xy_response(
     if response_direction not in {"raw_outcome", "effect"}:
         raise ValueError("response_direction must be 'raw_outcome' or 'effect'.")
 
+    outside = ~long["normalized_input_fraction"].between(0, 1)
+    if outside.any():
+        response_description = "raw-outcome" if response_direction == "raw_outcome" else "inhibition/affected-response"
+        warnings.append(
+            f"{int(outside.sum())} normalized {response_description} values fell outside 0-1 after scaling and were retained. "
+            "ARStat fits the imported replicate values without clipping because control normalization, background "
+            "correction, or ordinary replicate variation can produce values below 0% or above 100%."
+        )
+
     if assay_name == "Motility" and response_direction == "raw_outcome":
         if (long["normalized_input_fraction"] < 0).any():
-            raise ValueError("Motility/activity values cannot be negative after scaling.")
+            warnings.append(
+                "Negative relative-motility values were retained because the normalized table may include "
+                "background-corrected measurements; confirm that the selected response scale is correct."
+            )
         above_control = long["normalized_input_fraction"] > 1
         if above_control.any():
             warnings.append(
                 f"{int(above_control.sum())} relative motility values exceeded 100% and were retained because "
                 "they may reflect hypermotility or replicate variation."
             )
+
+    if response_direction == "raw_outcome":
         raw = long["normalized_input_fraction"]
         effect = 1 - raw
     else:
-        outside = ~long["normalized_input_fraction"].between(0, 1)
-        if outside.any():
-            warnings.append(
-                f"{int(outside.sum())} normalized values fell outside 0-1 after scaling and were clipped; inspect these cells."
-            )
-            long["normalized_input_fraction"] = long["normalized_input_fraction"].clip(0, 1)
-        if response_direction == "raw_outcome":
-            raw = long["normalized_input_fraction"]
-            effect = 1 - raw
-        else:
-            effect = long["normalized_input_fraction"]
-            raw = 1 - effect
+        effect = long["normalized_input_fraction"]
+        raw = 1 - effect
 
     raw_col = {
         "Egg hatch": "hatch_fraction",
@@ -418,19 +514,13 @@ def prepare_normalized_xy_response(
 
     long["unit"] = unit
     long["assay"] = assay_name
-    if assay_name == "Motility" and response_direction == "raw_outcome":
-        long[raw_col] = raw
-        long[effect_col] = effect
+    long[raw_col] = raw
+    long[effect_col] = effect
+    if assay_name == "Survival":
+        long["mortality_fraction"] = effect
+    if assay_name == "Motility":
         long["motility_inhibition_fraction"] = effect
-        long["response_fraction"] = effect
-    else:
-        long[raw_col] = raw.clip(0, 1)
-        long[effect_col] = effect.clip(0, 1)
-        if assay_name == "Survival":
-            long["mortality_fraction"] = effect.clip(0, 1)
-        if assay_name == "Motility":
-            long["motility_inhibition_fraction"] = effect.clip(0, 1)
-        long["response_fraction"] = effect.clip(0, 1)
+    long["response_fraction"] = effect
     long["response_percent"] = long["response_fraction"] * 100
     long["raw_outcome_percent"] = long[raw_col] * 100
     return long, warnings
@@ -781,10 +871,16 @@ def assay_warnings(df: pd.DataFrame, group_cols: list[str], dose_col: str = "dos
         if 0 not in doses:
             warnings.append(f"{label}: missing zero-dose control.")
         if len(doses) < 4:
-            warnings.append(f"{label}: fewer than four unique dose levels; IC50 may be unstable.")
+            warnings.append(
+                f"{label}: only {len(doses)} unique dose level(s) were found. At least four are required for "
+                "the four-parameter logistic model, so no IC50 will be calculated."
+            )
         positive = [d for d in doses if d > 0]
         if len(positive) < 3:
-            warnings.append(f"{label}: fewer than three positive dose levels.")
+            warnings.append(
+                f"{label}: only {len(positive)} positive dose level(s) were found. Include at least three positive "
+                "concentrations plus a zero-dose control for IC50 fitting."
+            )
     return warnings
 
 

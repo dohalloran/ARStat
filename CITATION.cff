@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use ARStat, please cite the archived software release."
 title: "ARStat: assay-aware statistical analysis and visualization of anthelmintic resistance phenotyping assays"
-version: "1.2.0"
-date-released: "2026-08-02"
+version: "1.2.1"
+date-released: "2026-08-03"
 license: MIT
 authors:
   - family-names: "O'Halloran"

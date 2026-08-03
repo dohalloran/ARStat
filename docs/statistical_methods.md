@@ -41,7 +41,7 @@ motility_inhibition = 1 - relative_motility
 
 The fitted response is motility inhibition. Relative motility is retained for the traditional descending plot and row-level exports.
 
-Values can instead be imported as already normalized percentages (`0–100`) or fractions (`0–1`). The user specifies whether imported values represent retained motility or motility inhibition. Retained-motility values above 1 are flagged but preserved because they may represent hypermotility relative to the control mean or ordinary replicate variation. Imported inhibition values outside the biological 0–1 interval are flagged and clipped.
+Values can instead be imported as already normalized percentages (`0–100`) or fractions (`0–1`). The user specifies whether imported values represent retained motility or motility inhibition. Values outside the biological 0–1 interval are flagged but preserved because control normalization, background correction, hypermotility, or ordinary replicate variation can produce observations below 0% or above 100%. The fitted 4PL asymptotes remain constrained to 0–1.
 
 ### Survival/mortality assay
 
@@ -71,7 +71,7 @@ For motility, the result is a motility-inhibition IC50 under the imported activi
 
 When enabled, ARStat estimates IC50 confidence intervals by nonparametric bootstrap resampling of rows within each fitted group. A confidence interval is reported when at least 25% of bootstrap fits converge and at least 20 bootstrap estimates are available.
 
-Count-based curve fitting can use total counts as fitting weights. Continuous motility and normalized XY responses are fitted without count weights.
+Count-based curve fitting can use total counts as fitting weights. Continuous motility and normalized XY responses are fitted without count weights. Normalized replicate observations are fitted as imported and are not clipped to 0–1.
 
 ## Fold-resistance
 
@@ -95,7 +95,7 @@ For motility and normalized replicate inputs, ARStat performs replicate-level Ma
 - Fisher exact tests pool replicate counts and do not model replicate-to-replicate overdispersion.
 - Mann-Whitney tests do not account for repeated measures, plate effects, nested experiments, or other dependence structures.
 - Raw motility normalization requires a representative zero-dose control within every fitted group.
-- Retained-motility values above 100% are preserved; negative fitted inhibition observations can therefore occur at low doses. These flagged rows should be reviewed rather than assumed to be errors.
+- Normalized values below 0% or above 100% are preserved for all normalized XY workflows; complementary raw-outcome or inhibition values may therefore also fall outside 0–1. These flagged rows should be reviewed rather than assumed to be errors.
 - A manual ordinal motility score is treated numerically and should only be used when scoring is consistent and scientifically justified.
 - Zero-dose controls are included in fitting and summaries, but on log-scale plots they are displayed at a symbolic left-edge tick labelled `0`.
 - Current ARStat models are not full mixed-effects, beta-binomial, repeated-measures, hormesis, or time-series models.

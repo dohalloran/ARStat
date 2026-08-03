@@ -59,7 +59,7 @@ dose,replicate_1,replicate_2,replicate_3
 10,40,44,42
 ```
 
-Do not import precomputed means, medians, standard deviations, or sample sizes. Select the replicate columns and indicate whether responses are percentages (`0–100`) or fractions (`0–1`).
+Do not import precomputed means, medians, standard deviations, or sample sizes. Select the replicate columns and indicate whether responses are percentages (`0–100`) or fractions (`0–1`). Auto-detection is reported as an informational note. Normalized values below 0% or above 100% are retained, not clipped, and are flagged for review.
 
 For multiple experimental groups, use one row per group and dose:
 
@@ -82,6 +82,7 @@ Check that ARStat has correctly identified:
 - drug/compound column, when present
 - individual replicate/Y columns for normalized XY input
 - assay-specific count or motility columns
+- for conventional LDA tables, ARStat may suggest `L3` as developed and `L1` as undeveloped; confirm that this matches the species, stage definitions, and protocol
 - value scale and response direction for motility
 - reference group, usually the susceptible isolate
 
@@ -125,8 +126,8 @@ Motility fits depend strongly on the measurement definition and controls. Review
 - missing zero-dose controls
 - a zero or negative control mean
 - values above 100% after normalization, which may indicate biological hypermotility or measurement noise
-- imported inhibition values clipped outside the allowed 0–1 range; retained-motility values above 100% are preserved
-- too few positive dose levels
+- normalized values below 0% or above 100%; these values are preserved for fitting and should be checked against the selected scale and normalization method
+- fewer than four unique dose levels, which prevents a four-parameter IC50 fit
 - failure to bracket the fitted IC50
 - incomplete or decreasing response curves
 

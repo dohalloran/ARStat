@@ -2,14 +2,18 @@ import numpy as np
 import pandas as pd
 
 from arstat_core import (
+    INFO_PREFIX,
+    assay_warnings,
     calculate_count_response,
     calculate_resistance_ratios,
+    drop_entirely_empty_columns,
     fit_dose_response,
     four_parameter_logistic,
     pairwise_count_tests,
     pairwise_continuous_tests,
     prepare_motility_response,
     prepare_normalized_xy_response,
+    suggest_count_columns,
     summarize_by_dose,
 )
 
@@ -383,3 +387,98 @@ def test_normalized_xy_motility_and_continuous_pairwise_tests():
     )
     assert not tests.empty
     assert {"p_value", "p_value_bh", "p_value_bonferroni"}.issubset(tests.columns)
+
+
+def test_normalized_xy_out_of_range_values_are_retained_not_clipped():
+    wide = pd.DataFrame(
+        {
+            "dose": [0, 1, 10, 100],
+            "rep1": [105, 92, 35, -2],
+            "rep2": [100, 88, 30, 1],
+        }
+    )
+    prepared, warnings = prepare_normalized_xy_response(
+        wide,
+        dose_col="dose",
+        replicate_cols=["rep1", "rep2"],
+        assay_name="Larval development",
+        value_scale="percent",
+        response_direction="raw_outcome",
+    )
+    assert prepared["development_fraction"].max() == 1.05
+    assert prepared["development_fraction"].min() == -0.02
+    assert np.isclose(prepared["response_fraction"].min(), -0.05)
+    assert np.isclose(prepared["response_fraction"].max(), 1.02)
+    assert any("were retained" in warning for warning in warnings)
+
+
+def test_auto_scale_detection_is_informational_and_robust_to_small_fraction_outlier():
+    wide = pd.DataFrame(
+        {
+            "dose": [0, 1, 10, 100],
+            "rep1": [1.0, 0.8, 0.3, 1.6],
+        }
+    )
+    prepared, messages = prepare_normalized_xy_response(
+        wide,
+        dose_col="dose",
+        replicate_cols=["rep1"],
+        assay_name="Egg hatch",
+        value_scale="auto",
+        response_direction="raw_outcome",
+    )
+    assert np.isclose(prepared.loc[prepared["dose"] == 0, "hatch_fraction"].iloc[0], 1.0)
+    assert any(message.startswith(INFO_PREFIX) for message in messages)
+    assert any("conservatively assumed fractions" in message for message in messages)
+
+
+def test_single_normalized_replicate_generates_variance_warning():
+    wide = pd.DataFrame({"dose": [0, 1, 10, 100], "rep1": [100, 80, 30, 5]})
+    _, warnings = prepare_normalized_xy_response(
+        wide,
+        dose_col="dose",
+        replicate_cols=["rep1"],
+        assay_name="Egg hatch",
+        value_scale="percent",
+        response_direction="raw_outcome",
+    )
+    assert any("Only one replicate response column" in warning for warning in warnings)
+
+
+def test_lda_l1_l3_aliases_are_suggested_conservatively():
+    developed, undeveloped = suggest_count_columns(
+        ["strain", "dose", "L1", "L3"],
+        "Larval development",
+    )
+    assert developed == "L3"
+    assert undeveloped == "L1"
+
+
+def test_same_count_column_cannot_be_used_twice():
+    df = pd.DataFrame({"L1": [10, 5]})
+    try:
+        calculate_count_response(df, "L1", "L1", "Egg hatch")
+    except ValueError as exc:
+        assert "must use different columns" in str(exc)
+    else:
+        raise AssertionError("Expected duplicate response-column mapping to fail.")
+
+
+def test_entirely_empty_columns_are_removed():
+    df = pd.DataFrame({"dose": [0, 1], "Rep1": [100, 50], "Unnamed: 4": [np.nan, np.nan]})
+    cleaned, notes = drop_entirely_empty_columns(df)
+    assert list(cleaned.columns) == ["dose", "Rep1"]
+    assert any("Unnamed: 4" in note for note in notes)
+
+
+def test_insufficient_dose_warning_says_no_ic50_will_be_calculated():
+    df = pd.DataFrame(
+        {
+            "drug": ["IVM"] * 6,
+            "strain": ["BCR"] * 6,
+            "dose": [0, 0, 10, 10, 100, 100],
+        }
+    )
+    warnings = assay_warnings(df, ["drug", "strain"], dose_col="dose")
+    assert any("no IC50 will be calculated" in warning for warning in warnings)
+    assert any("three positive concentrations plus a zero-dose control" in warning for warning in warnings)
