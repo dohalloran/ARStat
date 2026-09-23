@@ -25,6 +25,15 @@ Each workflow has its own response calculation and expected raw data columns.
 
 Use one of the bundled hookworm-style examples or upload a CSV/XLSX file. Choose either **Raw assay measurements** or **Normalized XY replicate table**. Blank templates are available in the app and in the `templates/` folder.
 
+The bundled egg hatch, larval development, and motility examples contain real experimental data; the survival/mortality example is illustrative. Selecting an example locks **Assay type** and the dose unit to match that file.
+
+ARStat inspects each upload before analysis:
+
+- Long-form files (one row per replicate or well) are always analyzed as raw assay measurements, and the normalized XY option is disabled. ARStat recognizes these from assay-specific columns (`L1`/`eggs`, `developed`/`undeveloped`, `dead`/`alive`, `motility`) or from a `replicate` or `well` column, so a motility file with a differently named measurement column (for example `thrashes`) is still handled correctly.
+- Wide tables with two or more `Rep1`, `Rep2`, … (or `Y1`, `Y2`, …) columns open in the normalized XY layout automatically.
+- A single value in a `unit` column (for example `uM` or `nM`) sets and locks the displayed dose unit.
+- The **Run ARStat** button stays disabled until blocking problems are fixed. These include non-numeric or negative doses, negative counts, proportions entered in count columns, mixed dose units, duplicate column headers, more than one assay in a file, an assay column that disagrees with the measurement columns, and XY tables in which a dose repeats within the same group.
+
 ### Raw motility layout
 
 A motility file should contain one row per replicate or well and one continuous activity column:
@@ -61,7 +70,7 @@ dose,replicate_1,replicate_2,replicate_3
 
 Do not import precomputed means, medians, standard deviations, or sample sizes. Select the replicate columns and indicate whether responses are percentages (`0–100`) or fractions (`0–1`). Auto-detection is reported as an informational note. Normalized values below 0% or above 100% are retained, not clipped, and are flagged for review.
 
-For multiple experimental groups, use one row per group and dose:
+For multiple experimental groups, use one row per group and dose. Each dose must appear only once per group/drug; replicates go in separate columns, not separate rows:
 
 ```text
 Group,Drug,Dose,Rep1,Rep2,Rep3

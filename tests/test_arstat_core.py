@@ -6,7 +6,20 @@ from arstat_core import (
     assay_warnings,
     calculate_count_response,
     calculate_resistance_ratios,
+    count_columns_look_like_proportions,
+    dataframe_signature,
     drop_entirely_empty_columns,
+    detect_long_form_layout,
+    detect_raw_assay_types,
+    detect_declared_assays,
+    find_column,
+    find_duplicate_headers,
+    normalize_dose_unit,
+    read_table_bytes,
+    infer_declared_assay,
+    is_id_like_column,
+    looks_like_normalized_xy,
+    xy_repeated_dose_rows,
     fit_dose_response,
     four_parameter_logistic,
     pairwise_count_tests,
@@ -482,3 +495,130 @@ def test_insufficient_dose_warning_says_no_ic50_will_be_calculated():
     warnings = assay_warnings(df, ["drug", "strain"], dose_col="dose")
     assert any("no IC50 will be calculated" in warning for warning in warnings)
     assert any("three positive concentrations plus a zero-dose control" in warning for warning in warnings)
+
+
+def test_detect_raw_assay_signatures_for_bundled_examples():
+    expected = {
+        "egg_hatch_example.csv": ["Egg hatch"],
+        "larval_development_example.csv": ["Larval development"],
+        "motility_example.csv": ["Motility"],
+        "survival_example.csv": ["Survival"],
+    }
+    for filename, assay_types in expected.items():
+        df = pd.read_csv(f"sample_data/{filename}")
+        assert detect_raw_assay_types(df) == assay_types
+
+
+def test_normalized_xy_templates_are_not_misclassified_as_raw_assays():
+    for filename in ["normalized_xy_replicates_template.csv", "normalized_xy_multigroup_template.csv"]:
+        df = pd.read_csv(f"templates/{filename}")
+        assert detect_raw_assay_types(df) == []
+
+
+def test_infer_declared_assay_from_metadata_column():
+    assert infer_declared_assay(pd.DataFrame({"assay": ["egg_hatch", "egg_hatch"]})) == "Egg hatch"
+    assert infer_declared_assay(pd.DataFrame({"assay": ["mortality", "survival"]})) == "Survival"
+    mixed = pd.DataFrame({"assay": ["egg_hatch", "motility"]})
+    assert detect_declared_assays(mixed) == ["Egg hatch", "Motility"]
+    assert infer_declared_assay(mixed) is None
+
+
+def test_long_form_file_with_unrecognized_measurement_name_is_not_xy():
+    # Real motility data often uses a column name ARStat does not know (e.g. "thrashes").
+    # The replicate/well columns still mark it as long-form, so XY must be disabled.
+    df = pd.read_csv("sample_data/motility_example.csv").rename(columns={"motility": "thrashes"})
+    assert detect_raw_assay_types(df) == []
+    assert detect_long_form_layout(df) is not None
+    assert not looks_like_normalized_xy(df)
+
+    generic = df[["strain", "dose", "replicate", "thrashes"]]
+    assert "replicate" in detect_long_form_layout(generic)
+
+
+def test_normalized_xy_templates_are_recognized_and_not_long_form():
+    for filename in ["normalized_xy_replicates_template.csv", "normalized_xy_multigroup_template.csv"]:
+        df = pd.read_csv(f"templates/{filename}")
+        assert detect_long_form_layout(df) is None
+        assert looks_like_normalized_xy(df)
+    for filename in ["egg_hatch_example.csv", "motility_example.csv"]:
+        assert not looks_like_normalized_xy(pd.read_csv(f"sample_data/{filename}"))
+
+
+def test_replicate_and_well_ids_are_never_response_columns():
+    for name in ["replicate", "Replicate", "well", "Well ID", "experiment_id", "rep"]:
+        assert is_id_like_column(name), name
+    for name in ["Rep1", "rep_2", "Y1", "thrashes", "motility"]:
+        assert not is_id_like_column(name), name
+
+
+def test_find_column_is_case_and_punctuation_insensitive():
+    cols = ["Group", "Drug", "Dose", "Rep1"]
+    assert find_column(cols, ["dose", "concentration"]) == "Dose"
+    assert find_column(cols, ["strain", "group"]) == "Group"
+    assert find_column(["Well_ID"], ["well id"]) == "Well_ID"
+    assert find_column(cols, ["replicate"]) is None
+
+
+def test_xy_repeated_doses_are_counted_within_group_and_drug():
+    multi = pd.read_csv("templates/normalized_xy_multigroup_template.csv")
+    assert xy_repeated_dose_rows(multi, "Dose", "Group", "Drug") == 0
+    # Without the group column, the two groups' doses collide and would be pooled into one curve.
+    assert xy_repeated_dose_rows(multi, "Dose") > 0
+    doubled = pd.concat([multi, multi])
+    assert xy_repeated_dose_rows(doubled, "Dose", "Group", "Drug") == len(multi)
+
+
+def test_duplicate_headers_renamed_by_pandas_are_detected():
+    from io import StringIO
+
+    df = pd.read_csv(StringIO("strain,dose,L1,eggs,L1\nWMD,0,10,2,99\n"))
+    assert list(df.columns) == ["strain", "dose", "L1", "eggs", "L1.1"]
+    assert find_duplicate_headers(df.columns) == ["L1"]
+    assert find_duplicate_headers(["strain", "dose", "L1", "eggs"]) == []
+
+
+def test_proportions_entered_as_counts_are_detected():
+    counts = pd.read_csv("sample_data/egg_hatch_example.csv")
+    assert not count_columns_look_like_proportions(counts, "L1", "eggs")
+    props = counts.assign(
+        L1=(counts["L1"] / (counts["L1"] + counts["eggs"])).round(3),
+        eggs=(counts["eggs"] / (counts["L1"] + counts["eggs"])).round(3),
+    )
+    assert count_columns_look_like_proportions(props, "L1", "eggs")
+
+
+
+def test_dataframe_signature_changes_for_same_shape_content_or_schema_changes():
+    base = pd.DataFrame({"dose": [0, 1], "Rep1": [100, 50]})
+    same = base.copy()
+    changed_value = pd.DataFrame({"dose": [0, 1], "Rep1": [100, 49]})
+    changed_header = base.rename(columns={"Rep1": "RepA"})
+    assert dataframe_signature(base) == dataframe_signature(same)
+    assert dataframe_signature(base) != dataframe_signature(changed_value)
+    assert dataframe_signature(base) != dataframe_signature(changed_header)
+
+
+def test_normalize_dose_unit_collapses_equivalent_micro_and_molar_labels():
+    assert {normalize_dose_unit(v) for v in ["uM", "um", "μM", "µM"]} == {"µM"}
+    assert normalize_dose_unit("NM") == "nM"
+    assert normalize_dose_unit("mg/mL") == "mg/mL"
+
+
+def test_windows_excel_csv_with_micro_sign_is_read_not_rejected():
+    df = pd.read_csv("sample_data/egg_hatch_example.csv").assign(unit="µM")
+    # Excel on Windows saves CSVs as Windows-1252, where µ is byte 0xB5 (invalid UTF-8).
+    cp1252 = df.to_csv(index=False).encode("cp1252")
+    read = read_table_bytes(cp1252, "plate_reader_export.csv")
+    assert read["unit"].unique().tolist() == ["µM"]
+    assert list(read.columns) == list(df.columns)
+
+    bom = df.to_csv(index=False).encode("utf-8-sig")
+    assert list(read_table_bytes(bom, "export.csv").columns)[0] == "experiment_id"
+
+    try:
+        read_table_bytes(bytes(range(256)) * 20, "garbage.csv")
+    except ValueError as exc:
+        assert "not a readable text CSV" in str(exc)
+    else:
+        raise AssertionError("Binary garbage should not parse as a CSV.")
+

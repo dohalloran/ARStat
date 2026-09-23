@@ -3,5 +3,7 @@ Egg hatch,KGR,thiabendazole,6.475313226711958,True,OK,
 Egg hatch,WMD,thiabendazole,0.5301641927992641,True,OK,
 Larval development,KGR,ivermectin,26.319346148356757,True,OK,
 Larval development,WMD,ivermectin,2.4316417207718914,True,OK,
+Motility,KGR,ivermectin,65.3735079801926,True,OK,Raw motility measurements were normalized to the mean zero-dose control within each fitted group. | 11 relative motility values exceeded the zero-dose mean (100%). They were retained because they may reflect hypermotility or ordinary replicate variation.
+Motility,WMD,ivermectin,22.68901277125502,True,OK,Raw motility measurements were normalized to the mean zero-dose control within each fitted group. | 11 relative motility values exceeded the zero-dose mean (100%). They were retained because they may reflect hypermotility or ordinary replicate variation.
 Survival,KGR,ivermectin,146.20770661127224,True,OK,
 Survival,WMD,ivermectin,12.790935937934517,True,OK,

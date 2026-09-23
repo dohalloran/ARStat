@@ -7,6 +7,8 @@ from Python scripts or notebooks.
 
 from __future__ import annotations
 
+import hashlib
+import re
 from dataclasses import dataclass
 from itertools import combinations
 from typing import Iterable, Optional
@@ -18,6 +20,65 @@ from scipy.stats import fisher_exact, mannwhitneyu, ttest_ind
 
 
 INFO_PREFIX = "INFO: "
+
+
+def dataframe_signature(df: pd.DataFrame) -> str:
+    """Return a content-aware signature for Streamlit state/result invalidation.
+
+    The signature includes column names and dtypes as well as row values/index, so
+    a corrected re-upload with the same filename and dimensions cannot silently
+    inherit stale auto-detection or stored results.
+    """
+    digest = hashlib.sha256()
+    schema = [(str(col), str(dtype)) for col, dtype in zip(df.columns, df.dtypes)]
+    digest.update(repr(schema).encode("utf-8"))
+    try:
+        row_hashes = pd.util.hash_pandas_object(df, index=True).to_numpy(dtype="uint64", copy=False)
+        digest.update(row_hashes.tobytes())
+    except Exception:
+        digest.update(df.to_csv(index=True).encode("utf-8"))
+    return f"{digest.hexdigest()}_{df.shape[0]}x{df.shape[1]}"
+
+
+def read_table_bytes(raw: bytes, filename: str = "") -> pd.DataFrame:
+    """Read an uploaded CSV or .xlsx file from bytes.
+
+    CSV files are decoded as UTF-8 first (a byte-order mark is handled). CSVs
+    saved by Excel on Windows are usually Windows-1252, where ``µ`` is byte
+    0xB5 and is invalid UTF-8, so those files fall back to Windows-1252 rather
+    than being rejected. Files that decode as neither are reported as not text.
+    """
+    from io import BytesIO
+
+    if str(filename).lower().endswith((".xlsx", ".xls")):
+        return pd.read_excel(BytesIO(raw))
+    try:
+        return pd.read_csv(BytesIO(raw), encoding="utf-8")
+    except UnicodeDecodeError:
+        pass
+    try:
+        return pd.read_csv(BytesIO(raw), encoding="cp1252")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            "the file is not a readable text CSV; it could not be decoded as UTF-8 or Windows-1252"
+        ) from exc
+
+
+def normalize_dose_unit(value: object) -> str:
+    """Normalize common molar dose-unit spellings for display and comparison.
+
+    This treats ``uM``, ``μM`` and ``µM`` as equivalent without changing unknown
+    units, whose capitalization may be meaningful.
+    """
+    text = str(value).strip().replace("μ", "µ")
+    aliases = {
+        "um": "µM",
+        "µm": "µM",
+        "nm": "nM",
+        "mm": "mM",
+        "pm": "pM",
+    }
+    return aliases.get(text.lower(), text)
 
 
 ASSAY_PRESETS = {
@@ -159,6 +220,201 @@ def suggest_count_columns(columns: Iterable[str], assay_name: str) -> tuple[Opti
     success = first_match(aliases["success"])
     failure = first_match(aliases["failure"], excluded=success)
     return success, failure
+
+
+ASSAY_VALUE_ALIASES = {
+    "egg hatch": "Egg hatch",
+    "egg_hatch": "Egg hatch",
+    "egg-hatch": "Egg hatch",
+    "eha": "Egg hatch",
+    "larval development": "Larval development",
+    "larval_development": "Larval development",
+    "larval-development": "Larval development",
+    "lda": "Larval development",
+    "motility": "Motility",
+    "survival": "Survival",
+    "mortality": "Survival",
+    "survival mortality": "Survival",
+    "survival/mortality": "Survival",
+}
+
+
+def detect_declared_assays(df: pd.DataFrame) -> list[str]:
+    """Return recognized assay names found in an ``assay`` metadata column."""
+    assay_col = next((c for c in df.columns if _canonical_column_name(c) == "assay"), None)
+    if assay_col is None:
+        return []
+
+    recognized: set[str] = set()
+    for value in df[assay_col].dropna():
+        key = str(value).strip().lower()
+        normalized_key = _canonical_column_name(key)
+        match = ASSAY_VALUE_ALIASES.get(key) or ASSAY_VALUE_ALIASES.get(normalized_key)
+        if match:
+            recognized.add(match)
+    return sorted(recognized)
+
+
+def infer_declared_assay(df: pd.DataFrame) -> Optional[str]:
+    """Return one recognized assay declared by metadata, or ``None`` if ambiguous."""
+    recognized = detect_declared_assays(df)
+    return recognized[0] if len(recognized) == 1 else None
+
+
+def detect_raw_assay_types(df: pd.DataFrame) -> list[str]:
+    """Detect strong raw-assay signatures from assay-specific measurement columns.
+
+    This intentionally ignores a generic ``assay`` metadata column by itself. The
+    function is used to keep raw count/activity tables from being accidentally
+    analyzed as normalized XY replicate tables.
+    """
+    detected: list[str] = []
+    columns = list(df.columns)
+
+    for assay_name in ("Egg hatch", "Larval development", "Survival"):
+        success, failure = suggest_count_columns(columns, assay_name)
+        if success is not None and failure is not None:
+            detected.append(assay_name)
+
+    normalized_columns = {_canonical_column_name(c) for c in columns}
+    # A single wide XY response column could legitimately be named "motility" or
+    # "activity". Treat motility as a strong raw signature only when long-form
+    # replicate/well metadata or an explicit motility assay declaration is also present.
+    has_motility_measurement = any(name in normalized_columns for name in {"motility", "motility score", "activity", "activity score"})
+    has_long_form_id = any(name in normalized_columns for name in {"replicate", "rep", "well", "well id"})
+    if has_motility_measurement and (has_long_form_id or infer_declared_assay(df) == "Motility"):
+        detected.append("Motility")
+
+    return detected
+
+
+# Column names that identify one row per replicate or well. A normalized XY
+# table stores replicates as separate columns, so a file containing one of these
+# identifier columns is long-form data and must not be analyzed as XY.
+LONG_FORM_ID_NAMES = (
+    "replicate", "rep", "replicate id", "replicate number", "rep id",
+    "well", "well id", "wells", "well position",
+)
+
+# Additional identifier-like names that should never be offered as numeric
+# response columns even when their values happen to be numbers.
+ID_LIKE_NAMES = set(LONG_FORM_ID_NAMES) | {
+    "experiment id", "experiment", "id", "sample id", "sample", "plate", "plate id",
+    "row", "column", "index", "run", "batch", "date",
+}
+
+# Wide XY replicate columns such as Rep1, rep_2, Replicate 3, Y1.
+XY_REPLICATE_PATTERN = re.compile(r"^(rep|replicate|y)\s?\d+$")
+
+
+def find_column(columns: Iterable[str], candidates: Iterable[str]) -> Optional[str]:
+    """Return the first column matching a candidate name, ignoring case and punctuation."""
+    lookup: dict[str, str] = {}
+    for col in columns:
+        lookup.setdefault(_canonical_column_name(col), col)
+    for candidate in candidates:
+        match = lookup.get(_canonical_column_name(candidate))
+        if match is not None:
+            return match
+    return None
+
+
+def is_id_like_column(column: object) -> bool:
+    """Return True for replicate, well, and other identifier columns."""
+    return _canonical_column_name(column) in ID_LIKE_NAMES
+
+
+def is_xy_replicate_column(column: object) -> bool:
+    """Return True for wide replicate column names such as Rep1 or Y2."""
+    return bool(XY_REPLICATE_PATTERN.match(_canonical_column_name(column)))
+
+
+def mostly_numeric(series: pd.Series, threshold: float = 0.8) -> bool:
+    """Return True when at least ``threshold`` of supplied cells are numeric."""
+    supplied = series.notna() & series.astype(str).str.strip().ne("")
+    n_supplied = int(supplied.sum())
+    if n_supplied == 0:
+        return False
+    n_numeric = int(pd.to_numeric(series.loc[supplied], errors="coerce").notna().sum())
+    return n_numeric / n_supplied >= threshold
+
+
+def detect_long_form_layout(df: pd.DataFrame) -> Optional[str]:
+    """Explain why a table is long-form (one row per replicate/well), or return None.
+
+    Raw assay files are recognised by their measurement columns in
+    :func:`detect_raw_assay_types`. This check catches long-form files whose
+    measurement column has a name ARStat does not recognise (for example a
+    motility file with a ``thrashes`` column). Such files contain a replicate or
+    well identifier column, which a normalized XY table never has.
+    """
+    id_col = find_column(df.columns, LONG_FORM_ID_NAMES)
+    if id_col is not None:
+        return (
+            f"it has a per-row replicate/well identifier column ('{id_col}'), so each row is one replicate "
+            "rather than one dose"
+        )
+    return None
+
+
+def looks_like_normalized_xy(df: pd.DataFrame) -> bool:
+    """Return True for wide tables with two or more RepN/YN replicate columns and no raw-assay signature."""
+    rep_cols = [c for c in df.columns if is_xy_replicate_column(c)]
+    if len(rep_cols) < 2:
+        return False
+    return not detect_raw_assay_types(df) and detect_long_form_layout(df) is None
+
+
+def xy_repeated_dose_rows(
+    df: pd.DataFrame,
+    dose_col: str,
+    group_col: Optional[str] = None,
+    drug_col: Optional[str] = None,
+) -> int:
+    """Count rows whose dose repeats within the same group/drug in a wide XY table.
+
+    A normalized XY table has one row per dose for each group/drug combination,
+    with replicates in separate columns. Repeated doses mean either that the
+    group/drug column has not been selected (several curves would be pooled) or
+    that the file is long-form replicate data.
+    """
+    keys = [c for c in (group_col, drug_col) if c] + [dose_col]
+    work = df[keys].copy()
+    work[dose_col] = pd.to_numeric(work[dose_col], errors="coerce")
+    work = work.dropna(subset=[dose_col])
+    if work.empty:
+        return 0
+    return int(work.duplicated(subset=keys, keep="first").sum())
+
+
+def find_duplicate_headers(columns: Iterable[str]) -> list[str]:
+    """Return header names that were duplicated in the original file.
+
+    ``pandas.read_csv`` and ``read_excel`` silently rename a repeated header
+    ``L1`` to ``L1.1``, so the duplicates never reach the app under the same
+    name. Detect that renaming so a second, different ``L1`` column cannot be
+    ignored without warning.
+    """
+    column_list = [str(c) for c in columns]
+    present = set(column_list)
+    duplicated: list[str] = []
+    for col in column_list:
+        match = re.match(r"^(.*)\.(\d+)$", col)
+        if match and match.group(1) in present and match.group(1) not in duplicated:
+            duplicated.append(match.group(1))
+    return duplicated
+
+
+def count_columns_look_like_proportions(df: pd.DataFrame, success_col: str, failure_col: str) -> bool:
+    """Return True when two 'count' columns are really proportions (every row totals at most 1)."""
+    success = pd.to_numeric(df[success_col], errors="coerce")
+    failure = pd.to_numeric(df[failure_col], errors="coerce")
+    total = (success + failure).dropna()
+    if total.empty:
+        return False
+    values = pd.concat([success, failure]).dropna()
+    has_fraction = bool(((values % 1).abs() > 1e-9).any())
+    return has_fraction and bool((total <= 1 + 1e-9).all())
 
 
 def drop_entirely_empty_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:

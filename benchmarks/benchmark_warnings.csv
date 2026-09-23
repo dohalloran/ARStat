@@ -1,1 +1,3 @@
-
+assay_workflow,warning
+Motility,Raw motility measurements were normalized to the mean zero-dose control within each fitted group.
+Motility,10 relative motility values exceeded the zero-dose mean (100%). They were retained because they may reflect hypermotility or ordinary replicate variation.

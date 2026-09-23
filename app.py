@@ -20,7 +20,22 @@ from arstat_core import (
     assay_warnings,
     calculate_count_response,
     calculate_resistance_ratios,
+    count_columns_look_like_proportions,
+    dataframe_signature,
     drop_entirely_empty_columns,
+    detect_long_form_layout,
+    detect_raw_assay_types,
+    detect_declared_assays,
+    find_column,
+    find_duplicate_headers,
+    infer_declared_assay,
+    is_id_like_column,
+    is_xy_replicate_column,
+    looks_like_normalized_xy,
+    mostly_numeric,
+    normalize_dose_unit,
+    read_table_bytes,
+    xy_repeated_dose_rows,
     fit_dose_response,
     four_parameter_logistic,
     pairwise_continuous_tests,
@@ -50,7 +65,7 @@ with st.expander("What ARStat does", expanded=False):
         """
         ARStat turns raw assay counts or normalized replicate responses into standardized dose-response outputs.
 
-        The bundled examples use illustrative hookworm datasets: Ancylostoma caninum WMD as the susceptible reference and KGR as a resistant isolate. Thiabendazole is used for the egg hatch example; ivermectin is used for larval development, motility, and survival/mortality examples.
+        The bundled sample-data folder includes real experimental datasets for egg hatch, larval development, and motility, plus an illustrative survival/mortality example.
 
         - assay-specific response calculations
         - input validation and warnings
@@ -72,10 +87,9 @@ def read_example(name: str) -> pd.DataFrame:
 
 def read_uploaded_table(uploaded) -> pd.DataFrame:
     """Read a CSV or Excel worksheet uploaded through Streamlit."""
-    name = getattr(uploaded, "name", "").lower()
-    if name.endswith((".xlsx", ".xls")):
-        return pd.read_excel(uploaded)
-    return pd.read_csv(uploaded)
+    name = getattr(uploaded, "name", "")
+    raw = uploaded.getvalue() if hasattr(uploaded, "getvalue") else uploaded.read()
+    return read_table_bytes(raw, name)
 
 
 def dataframe_to_excel_bytes(tables: dict[str, pd.DataFrame]) -> bytes:
@@ -301,6 +315,10 @@ def show_download_library(location=st.sidebar):
 
     if available_samples:
         location.markdown("**Sample data**")
+        location.caption(
+            "Includes real experimental data for egg hatch, larval development, and motility; "
+            "the survival/mortality file is an illustrative example."
+        )
         for label, filename in available_samples.items():
             location.download_button(
                 label=f"Download {label.lower()}",
@@ -414,48 +432,104 @@ if page == "How to / user guide":
     st.stop()
 
 st.sidebar.header("1. Data")
-input_layout = st.sidebar.radio(
-    "Input layout",
-    ["Raw assay measurements", "Normalized XY replicate table"],
+source = st.sidebar.radio(
+    "Data source",
+    ["Use example data", "Upload CSV"],
     index=0,
-    help=(
-        "Raw measurements use assay-specific counts or scores. The normalized XY layout uses one dose column "
-        "and adjacent columns containing individual replicate responses; ARStat calculates mean, SD, and n internally."
-    ),
+    key="data_source",
 )
 
-if input_layout == "Raw assay measurements":
-    source = st.sidebar.radio("Data source", ["Use example data", "Upload CSV"], index=0)
-    if source == "Use example data":
-        sample_label = st.sidebar.selectbox("Example", list(sample_options.keys()), key="sample_label")
-        if st.session_state.get("last_sample_label") != sample_label:
-            preset = example_presets.get(sample_label, {})
-            st.session_state["assay_type"] = preset.get("assay", "Egg hatch")
-            st.session_state["reference_group_select"] = preset.get("reference", "None") or "None"
-            st.session_state["last_sample_label"] = sample_label
-        df = read_example(sample_options[sample_label])
-    else:
-        uploaded = st.sidebar.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx"], key="raw_upload")
-        if uploaded is None:
-            st.info("Upload a CSV file or switch to an example dataset.")
-            st.stop()
-        df = read_uploaded_table(uploaded)
-        sample_label = "uploaded"
-        st.session_state["last_sample_label"] = None
+if source == "Use example data":
+    # Bundled examples are raw assay tables, so normalized XY is not a valid
+    # alternative for this source.
+    input_layout = "Raw assay measurements"
+    st.session_state["input_layout"] = input_layout
+    st.sidebar.caption("Bundled examples use raw assay measurements.")
+    sample_label = st.sidebar.selectbox("Example", list(sample_options.keys()), key="sample_label")
+    preset = example_presets.get(sample_label, {})
+    # Example datasets define their assay. Keep Assay type synchronized on every
+    # rerun so a stale widget value can never disagree with the selected example.
+    st.session_state["assay_type"] = preset.get("assay", "Egg hatch")
+    if st.session_state.get("last_sample_label") != sample_label:
+        st.session_state["reference_group_select"] = preset.get("reference", "None") or "None"
+        st.session_state["last_sample_label"] = sample_label
+    df = read_example(sample_options[sample_label])
+    data_identity = f"example:{sample_label}"
+    example_assay_locked = True
+    # Re-run upload auto-detection if the user returns to the same uploaded file.
+    st.session_state.pop("assay_autoset_identity", None)
+    st.session_state.pop("layout_autoset_identity", None)
 else:
-    source = "Upload CSV"
-    sample_label = "normalized_xy"
     uploaded = st.sidebar.file_uploader(
-        "Upload normalized XY replicate table",
+        "Upload CSV or Excel file",
         type=["csv", "xlsx"],
-        key="normalized_xy_upload",
-        help="Use one dose/X column and one or more individual replicate/Y columns. Do not precompute mean, SD, or n.",
+        key="data_upload",
+        help="Upload either raw assay measurements or a normalized XY replicate table; ARStat checks the structure before analysis.",
     )
     if uploaded is None:
-        st.info("Upload a normalized XY replicate table or switch to raw assay measurements.")
+        st.session_state.pop("assay_autoset_identity", None)
+        st.session_state.pop("layout_autoset_identity", None)
+        st.info("Upload a CSV or Excel file, or switch to an example dataset.")
         st.stop()
-    df = read_uploaded_table(uploaded)
+    try:
+        df = read_uploaded_table(uploaded)
+    except Exception as exc:
+        detail = str(exc).strip().rstrip(".") or type(exc).__name__
+        st.sidebar.error(
+            f"Could not read the uploaded file ({detail}). "
+            "Check that it is a valid CSV or .xlsx workbook and try again."
+        )
+        st.stop()
+    data_identity = f"upload:{getattr(uploaded, 'name', 'data')}:{dataframe_signature(df)}"
+    sample_label = "uploaded"
     st.session_state["last_sample_label"] = None
+    example_assay_locked = False
+
+    preview_df, _ = drop_entirely_empty_columns(df)
+    preliminary_raw_assays = detect_raw_assay_types(preview_df)
+    long_form_reason = detect_long_form_layout(preview_df)
+    if preliminary_raw_assays or long_form_reason:
+        input_layout = "Raw assay measurements"
+        st.session_state["input_layout"] = input_layout
+        st.sidebar.selectbox(
+            "Input layout",
+            ["Raw assay measurements"],
+            key="input_layout",
+            disabled=True,
+            help=(
+                "This file is laid out as raw, long-form assay data (one row per replicate or well), "
+                "so the normalized XY layout is disabled for it."
+            ),
+        )
+        if preliminary_raw_assays:
+            st.sidebar.caption(
+                f"Detected raw assay structure: **{', '.join(preliminary_raw_assays)}**. "
+                "Normalized XY is disabled for this upload."
+            )
+        else:
+            st.sidebar.caption(
+                f"Normalized XY is disabled for this upload because {long_form_reason}. "
+                "Map the measurement column below."
+            )
+    else:
+        layout_options = ["Raw assay measurements", "Normalized XY replicate table"]
+        # On a new upload, open wide RepN/YN tables directly in the XY layout.
+        if st.session_state.get("layout_autoset_identity") != data_identity:
+            st.session_state["input_layout"] = (
+                "Normalized XY replicate table" if looks_like_normalized_xy(preview_df) else "Raw assay measurements"
+            )
+            st.session_state["layout_autoset_identity"] = data_identity
+        if st.session_state.get("input_layout") not in layout_options:
+            st.session_state["input_layout"] = "Raw assay measurements"
+        input_layout = st.sidebar.radio(
+            "Input layout",
+            layout_options,
+            key="input_layout",
+            help=(
+                "Raw measurements use assay-specific counts or scores. The normalized XY layout uses one dose column "
+                "and adjacent columns containing individual replicate responses; ARStat calculates mean, SD, and n internally."
+            ),
+        )
 
 df, upload_cleanup_notes = drop_entirely_empty_columns(df)
 
@@ -466,53 +540,181 @@ cols = list(df.columns)
 if df.empty:
     st.error("The selected dataset is empty. Upload a CSV with at least one data row.")
     st.stop()
-if len(cols) != len(set(cols)):
-    duplicated = sorted({c for c in cols if cols.count(c) > 1})
-    st.error(f"Duplicate column names detected: {duplicated}. Please rename duplicate columns before analysis.")
+duplicated_headers = sorted({str(c) for c in cols if cols.count(c) > 1}) or find_duplicate_headers(cols)
+if duplicated_headers:
+    # pandas renames a repeated header such as "L1" to "L1.1", so also catch that form.
+    st.error(
+        f"Duplicate column names detected in the file header: {', '.join(duplicated_headers)}. "
+        "Rename or remove the duplicate columns before analysis so ARStat cannot read the wrong one."
+    )
     st.stop()
 if not cols:
     st.error("No usable columns remain after removing entirely empty columns.")
     st.stop()
+
+detected_raw_assays = detect_raw_assay_types(df)
+declared_assays = detect_declared_assays(df)
+declared_assay = infer_declared_assay(df)
+blocking_errors: list[str] = []
+preflight_warnings: list[str] = []
+
+# On a newly uploaded file, use strong metadata/column evidence to initialize
+# the assay selector. Users can still inspect the detected choice before running.
+if not example_assay_locked and st.session_state.get("assay_autoset_identity") != data_identity:
+    # Measurement columns are the stronger signal; fall back to assay metadata.
+    detected_assay = (detected_raw_assays[0] if len(detected_raw_assays) == 1 else None) or declared_assay
+    if detected_assay:
+        st.session_state["assay_type"] = detected_assay
+    st.session_state["assay_autoset_identity"] = data_identity
+
+if input_layout == "Normalized XY replicate table" and detected_raw_assays:
+    blocking_errors.append(
+        "This file contains assay-specific raw measurement columns "
+        f"({', '.join(detected_raw_assays)}), so it should not be analyzed as a normalized XY replicate table. "
+        "Switch Input layout to 'Raw assay measurements'."
+    )
+
+if len(declared_assays) > 1:
+    blocking_errors.append(
+        "The assay metadata column contains multiple recognized assay types "
+        f"({', '.join(declared_assays)}). Analyze one assay type per uploaded file."
+    )
+
+# The file contradicts itself: its assay column names one assay but its
+# measurement columns belong to another. No Assay type choice can fix that.
+metadata_conflict = bool(
+    declared_assay and len(detected_raw_assays) == 1 and detected_raw_assays[0] != declared_assay
+)
+if metadata_conflict:
+    blocking_errors.append(
+        f"The file's assay column says **{declared_assay}**, but its measurement columns are "
+        f"**{detected_raw_assays[0]}** columns. Correct the assay column or the column names so they agree before running."
+    )
+
+if df.duplicated().any():
+    preflight_warnings.append(
+        f"The input contains {int(df.duplicated().sum())} completely duplicated row(s). Confirm these are intentional replicates."
+    )
+
+unit_col = next((c for c in cols if str(c).strip().lower() in {"unit", "dose_unit", "dose unit"}), None)
+units: list[str] = []
+if unit_col is not None:
+    # Compare normalized labels so equivalent spellings such as uM / μM / µM
+    # do not get misreported as mixed dose units.
+    units = sorted({normalize_dose_unit(v) for v in df[unit_col].dropna() if str(v).strip()})
+    if len(units) > 1:
+        blocking_errors.append(
+            f"Multiple dose units were detected in '{unit_col}': {', '.join(units)}. Convert doses to one common unit before analysis."
+        )
+
+detected_dose_unit = units[0] if len(units) == 1 else ""
+if detected_dose_unit:
+    st.session_state["dose_unit_input"] = detected_dose_unit
+    st.session_state["dose_unit_identity"] = data_identity
+elif st.session_state.get("dose_unit_identity") != data_identity:
+    # A new file with no unit metadata should not silently inherit the previous
+    # file's unit. Start from a visible, editable µM default instead.
+    st.session_state["dose_unit_input"] = "µM"
+    st.session_state["dose_unit_identity"] = data_identity
 
 st.sidebar.header("2. Assay settings")
 assay_names = list(ASSAY_PRESETS.keys())
 default_assay = st.session_state.get("assay_type", "Egg hatch")
 if default_assay not in assay_names:
     st.session_state["assay_type"] = "Egg hatch"
-assay_name = st.sidebar.selectbox("Assay type", assay_names, key="assay_type")
+assay_name = st.sidebar.selectbox(
+    "Assay type",
+    assay_names,
+    key="assay_type",
+    disabled=example_assay_locked,
+    help="Example datasets lock this setting to the matching assay so the two selectors cannot disagree.",
+)
 assay = ASSAY_PRESETS[assay_name]
 
-def default_col(name: str, fallback_index: int = 0) -> str:
-    if name in cols:
-        return name
-    return cols[fallback_index] if cols else ""
+if metadata_conflict:
+    pass
+elif declared_assay and declared_assay != assay_name:
+    blocking_errors.append(
+        f"The uploaded file declares assay '{declared_assay}', but Assay type is set to '{assay_name}'. "
+        "Choose the assay that matches the file before running."
+    )
+elif declared_assay:
+    st.sidebar.caption(f"Detected assay metadata: **{declared_assay}**")
+
+if (not example_assay_locked and not metadata_conflict and input_layout == "Raw assay measurements"
+        and len(detected_raw_assays) == 1 and assay_name != detected_raw_assays[0]):
+    blocking_errors.append(
+        f"The raw measurement columns look like a **{detected_raw_assays[0]}** assay, but Assay type is set to **{assay_name}**. "
+        "Confirm the assay selection or column names before running."
+    )
 
 mapping_error = ""
 
+def numeric_mapping_errors(data: pd.DataFrame, column: str, label: str, *, allow_missing: bool = True) -> list[str]:
+    """Return blocking messages for cells that cannot be interpreted numerically."""
+    series = data[column]
+    text = series.astype(str).str.strip()
+    supplied = series.notna() & text.ne("")
+    numeric = pd.to_numeric(series, errors="coerce")
+    bad = supplied & numeric.isna()
+    messages = []
+    if bad.any():
+        examples = ", ".join(map(str, series.loc[bad].astype(str).head(3).tolist()))
+        messages.append(f"{label} column '{column}' contains {int(bad.sum())} non-numeric value(s) (for example: {examples}).")
+    if not allow_missing and numeric.isna().any():
+        messages.append(f"{label} column '{column}' contains missing values.")
+    return messages
+
+STRAIN_NAMES = ["strain", "isolate", "group", "population", "genetic background"]
+DOSE_NAMES = ["dose", "concentration", "conc", "dose x", "x"]
+REPLICATE_NAMES = ["replicate", "rep", "replicate id", "well", "well id"]
+DRUG_NAMES = ["drug", "compound"]
+
 if input_layout == "Raw assay measurements":
+    # Column names are matched case-insensitively so "Dose", "Strain", etc. map automatically.
+    default_strain = find_column(cols, STRAIN_NAMES)
+    default_dose = find_column(cols, DOSE_NAMES)
+    default_replicate = find_column(cols, REPLICATE_NAMES)
+    default_drug = find_column(cols, DRUG_NAMES)
     strain_col = st.sidebar.selectbox(
-        "Strain / isolate column", cols, index=cols.index(default_col("strain")) if "strain" in cols else 0
+        "Strain / isolate column", cols, index=cols.index(default_strain) if default_strain else 0
     )
     dose_col = st.sidebar.selectbox(
-        "Dose column", cols, index=cols.index(default_col("dose")) if "dose" in cols else min(1, len(cols) - 1)
+        "Dose column", cols, index=cols.index(default_dose) if default_dose else min(1, len(cols) - 1)
     )
     replicate_col = st.sidebar.selectbox(
-        "Replicate / well column", ["None"] + cols, index=(["None"] + cols).index("replicate") if "replicate" in cols else 0
+        "Replicate / well column", ["None"] + cols,
+        index=(["None"] + cols).index(default_replicate) if default_replicate else 0,
     )
     drug_col = st.sidebar.selectbox(
-        "Drug column", ["None"] + cols, index=(["None"] + cols).index("drug") if "drug" in cols else 0
+        "Drug column", ["None"] + cols,
+        index=(["None"] + cols).index(default_drug) if default_drug else 0,
     )
     include_drug_in_groups = drug_col != "None"
     group_cols = [drug_col, strain_col] if include_drug_in_groups else [strain_col]
     dose_unit = st.sidebar.text_input(
-        "Dose unit", value="µM", help="Used for plot labels and generated methods text."
+        "Dose unit",
+        key="dose_unit_input",
+        disabled=bool(detected_dose_unit),
+        help=(
+            "Used for plot labels and generated methods text. When a single unit is present in the uploaded data, "
+            "ARStat uses that metadata automatically and locks this field."
+        ),
     )
     if assay_name == "Motility":
-        motility_default = assay.get("measurement_default", "motility")
+        motility_default = find_column(cols, ["motility", "motility score", "activity", "activity score"])
+        if motility_default is None:
+            # Fall back to the first numeric column that is not an identifier or another mapped role,
+            # e.g. "thrashes", "speed", or "counts".
+            used = {strain_col, dose_col, replicate_col, drug_col}
+            motility_default = next(
+                (c for c in cols if c not in used and not is_id_like_column(c) and mostly_numeric(df[c])),
+                None,
+            )
         motility_col = st.sidebar.selectbox(
             assay.get("measurement_label", "Motility / activity measurement"),
             cols,
-            index=cols.index(default_col(motility_default)) if motility_default in cols else 0,
+            index=cols.index(motility_default) if motility_default else 0,
         )
         motility_scale_label = st.sidebar.selectbox(
             "Motility value scale",
@@ -577,24 +779,66 @@ if input_layout == "Raw assay measurements":
                 "is mapped to both measurements."
             )
     strain_values = sorted([str(v) for v in df[strain_col].dropna().unique()]) if strain_col in df.columns else []
+
+    # Catch column-role mistakes before model fitting.
+    if strain_col == dose_col:
+        blocking_errors.append("Strain / isolate and dose must use different columns.")
+    if replicate_col != "None" and replicate_col in {strain_col, dose_col}:
+        blocking_errors.append("Replicate / well cannot use the same column as strain / isolate or dose.")
+    if drug_col != "None" and drug_col in {strain_col, dose_col, replicate_col}:
+        blocking_errors.append("Drug cannot reuse the strain, dose, or replicate column.")
+    blocking_errors.extend(numeric_mapping_errors(df, dose_col, "Dose"))
+    dose_numeric = pd.to_numeric(df[dose_col], errors="coerce")
+    if (dose_numeric.dropna() < 0).any():
+        blocking_errors.append("Dose values cannot be negative.")
+
+    if assay_name == "Motility":
+        if motility_col in {strain_col, dose_col, replicate_col, drug_col}:
+            blocking_errors.append("The motility/activity measurement must use its own data column.")
+        blocking_errors.extend(numeric_mapping_errors(df, motility_col, "Motility/activity"))
+    else:
+        if success_col in {strain_col, dose_col, replicate_col, drug_col} or failure_col in {strain_col, dose_col, replicate_col, drug_col}:
+            blocking_errors.append("Assay count columns cannot reuse strain, dose, replicate, or drug columns.")
+        looks_like_proportions = success_col != failure_col and count_columns_look_like_proportions(
+            df, success_col, failure_col
+        )
+        if looks_like_proportions:
+            blocking_errors.append(
+                f"'{success_col}' and '{failure_col}' look like proportions, not counts: every row adds up to 1 or less. "
+                "Count-based assays need the raw counts (for example, numbers of eggs and L1). If you only have "
+                "percentages or fractions, enter them in the normalized XY template (one row per dose, one column per replicate)."
+            )
+        for column, label in ((success_col, "First assay count"), (failure_col, "Second assay count")):
+            blocking_errors.extend(numeric_mapping_errors(df, column, label))
+            numeric = pd.to_numeric(df[column], errors="coerce").dropna()
+            if (numeric < 0).any():
+                blocking_errors.append(f"Count column '{column}' contains negative values.")
+            if not looks_like_proportions and ((numeric % 1).abs() > 1e-9).any():
+                preflight_warnings.append(
+                    f"Count column '{column}' contains non-integer values. Confirm these are intended counts rather than normalized responses."
+                )
 else:
+    # Match "Dose", "dose", "Concentration", etc.; otherwise use the first mostly-numeric,
+    # non-replicate column rather than blindly taking the first column (often a group label).
+    default_xy_dose = find_column(cols, DOSE_NAMES) or next(
+        (c for c in cols if mostly_numeric(df[c]) and not is_xy_replicate_column(c) and not is_id_like_column(c)),
+        cols[0],
+    )
     dose_col = st.sidebar.selectbox(
         "Dose / X column",
         cols,
-        index=cols.index("dose") if "dose" in cols else 0,
+        index=cols.index(default_xy_dose),
     )
     identifier_options = ["None"] + [c for c in cols if c != dose_col]
-    group_candidates = ["group", "Group", "strain", "Strain", "isolate", "Isolate", "genetic_background", "population", "treatment"]
-    detected_group = next((c for c in group_candidates if c in cols and c != dose_col), "None")
+    detected_group = find_column([c for c in cols if c != dose_col], STRAIN_NAMES + ["treatment"]) or "None"
     group_col_input = st.sidebar.selectbox(
         "Experimental group column (optional)",
         identifier_options,
         index=identifier_options.index(detected_group),
         help="Examples include strain, isolate, genetic background, population, or treatment group.",
     )
-    drug_candidates = ["drug", "Drug", "compound", "Compound"]
-    detected_drug = next((c for c in drug_candidates if c in cols and c not in {dose_col, group_col_input}), "None")
     drug_options = ["None"] + [c for c in cols if c not in {dose_col, group_col_input}]
+    detected_drug = find_column(drug_options[1:], DRUG_NAMES) or "None"
     drug_col_input = st.sidebar.selectbox(
         "Drug / compound column (optional)",
         drug_options,
@@ -606,12 +850,18 @@ else:
     if drug_col_input != "None":
         excluded.add(drug_col_input)
     available_y = [c for c in cols if c not in excluded]
-    likely_replicates = [c for c in available_y if str(c).lower().startswith(("rep", "y"))]
+    # Offer only predominantly numeric columns, and never identifier columns such as
+    # replicate, well, or experiment ID even when they contain numbers.
+    numeric_y = [c for c in available_y if mostly_numeric(df[c]) and not is_id_like_column(c)]
+    likely_replicates = [c for c in numeric_y if is_xy_replicate_column(c)]
     replicate_cols = st.sidebar.multiselect(
         "Replicate / Y columns",
-        available_y,
-        default=likely_replicates or available_y,
-        help="Select individual replicate response columns. ARStat calculates mean, SD, and n internally.",
+        numeric_y,
+        default=likely_replicates or numeric_y,
+        help=(
+            "Only columns that are predominantly numeric are offered as Y responses; replicate, well, and ID "
+            "columns are excluded. ARStat calculates mean, SD, and n internally."
+        ),
     )
     dataset_label = st.sidebar.text_input(
         "Single-dataset group label",
@@ -625,7 +875,12 @@ else:
     )
     normalized_group_col = None if group_col_input == "None" else group_col_input
     normalized_drug_col = None if drug_col_input == "None" else drug_col_input
-    dose_unit = st.sidebar.text_input("Dose unit", value="µM")
+    dose_unit = st.sidebar.text_input(
+        "Dose unit",
+        key="dose_unit_input",
+        disabled=bool(detected_dose_unit),
+        help="When a single unit is present in the uploaded data, ARStat uses it automatically.",
+    )
     normalized_scale_label = st.sidebar.selectbox(
         "Response scale", ["Auto-detect", "0–100 percent", "0–1 fraction"], index=0
     )
@@ -651,6 +906,36 @@ else:
         strain_values = sorted(str(v) for v in df[normalized_group_col].dropna().unique())
     else:
         strain_values = [dataset_label] if dataset_label else ["Dataset 1"]
+
+    blocking_errors.extend(numeric_mapping_errors(df, dose_col, "Dose / X"))
+    dose_numeric = pd.to_numeric(df[dose_col], errors="coerce")
+    if (dose_numeric.dropna() < 0).any():
+        blocking_errors.append("Dose / X values cannot be negative.")
+    if not replicate_cols:
+        blocking_errors.append("Select at least one replicate / Y column.")
+    for column in replicate_cols:
+        blocking_errors.extend(numeric_mapping_errors(df, column, "Replicate / Y"))
+        numeric = pd.to_numeric(df[column], errors="coerce")
+        if numeric.notna().sum() == 0:
+            blocking_errors.append(f"Replicate / Y column '{column}' contains no numeric response values.")
+
+    # A normalized XY table has exactly one row per dose within each group/drug.
+    repeated = xy_repeated_dose_rows(df, dose_col, normalized_group_col, normalized_drug_col)
+    if repeated:
+        if normalized_group_col is None and normalized_drug_col is None:
+            hint = (
+                "If the file contains several strains/groups or drugs, select those columns so each gets its own curve. "
+                "If each row is one replicate or well, this is long-form data: switch Input layout to 'Raw assay measurements'."
+            )
+        else:
+            hint = (
+                "Replicates belong in separate columns (Rep1, Rep2, ...), not separate rows. If each row is one "
+                "replicate or well, this is long-form data: switch Input layout to 'Raw assay measurements'."
+            )
+        blocking_errors.append(
+            f"{repeated} row(s) repeat a dose already listed for the same group/drug. A normalized XY table has one row "
+            f"per dose for each group/drug. {hint}"
+        )
 
 st.sidebar.header("3. Model settings")
 n_boot = st.sidebar.select_slider(
@@ -696,29 +981,25 @@ if not reference_group and len(strain_values) > 1:
     st.sidebar.info("Select a susceptible/control reference strain to calculate fold resistance.")
 
 if mapping_error:
-    st.sidebar.error(mapping_error)
+    blocking_errors.append(mapping_error)
+for message in dict.fromkeys(blocking_errors):
+    st.sidebar.error(message)
+for message in dict.fromkeys(preflight_warnings):
+    st.sidebar.warning(message)
 run_button = st.sidebar.button(
     "Run ARStat",
     key="run_arstat_btn",
     type="primary",
-    disabled=bool(mapping_error),
+    disabled=bool(blocking_errors),
 )
 if st.sidebar.button("Clear stored results", key="clear_results_btn"):
     st.session_state.pop("arstat_results", None)
     st.session_state.pop("arstat_config", None)
     st.rerun()
 
-# A stable signature lets ARStat know whether the displayed results match the
-# current inputs. Streamlit reruns the script after downloads and table clicks;
-# this prevents expensive model fitting from running again unless the user
-# explicitly clicks Run ARStat or changes settings.
-def dataframe_signature(dataframe: pd.DataFrame) -> str:
-    try:
-        hashed = pd.util.hash_pandas_object(dataframe, index=True).astype("uint64")
-        return str(int(hashed.sum())) + f"_{dataframe.shape[0]}x{dataframe.shape[1]}"
-    except Exception:
-        return f"{dataframe.shape}_{list(dataframe.columns)}"
-
+# A stable, content-aware signature lets ARStat know whether the displayed
+# results match the current inputs. It is also used above to ensure a corrected
+# re-upload with the same filename and dimensions is treated as new data.
 current_config = {
     "input_layout": input_layout,
     "data_source": source,
@@ -764,7 +1045,12 @@ st.caption(f"Loaded {len(df):,} rows and {len(df.columns):,} columns. Confirm co
 for cleanup_note in upload_cleanup_notes:
     st.info(cleanup_note)
 if source == "Use example data":
-    st.success(f"Loaded {sample_label}. Assay settings were set to **{assay_name}** automatically. The bundled examples are illustrative hookworm-style sample data, not primary experimental measurements.")
+    provenance = (
+        "This bundled file contains real experimental sample data."
+        if assay_name in {"Egg hatch", "Larval development", "Motility"}
+        else "This survival/mortality file is an illustrative example dataset."
+    )
+    st.success(f"Loaded {sample_label}. Assay type is locked to **{assay_name}** for this example. {provenance}")
 st.dataframe(df.head(20), width='stretch')
 
 
@@ -1139,4 +1425,4 @@ if stored_config != current_config:
 if stored_results is not None:
     render_arstat_results(stored_results)
 
-st.caption("ARStat v1.2.1. Example datasets use illustrative hookworm assay data; downloads reuse stored results.")
+st.caption("ARStat v1.2.1. Sample data include real egg-hatch, larval-development, and motility datasets plus an illustrative survival dataset; downloads reuse stored results.")

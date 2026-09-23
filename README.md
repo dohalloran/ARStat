@@ -16,18 +16,18 @@ ARStat supports four assay workflows:
 
 The app starts from raw assay measurements or normalized XY replicate tables, calculates assay-specific response variables, fits four-parameter dose-response curves, estimates IC50 values, calculates fold-resistance versus a selected reference group, performs exploratory dose-level tests with multiple-testing correction, and exports analysis tables, plots, Excel workbooks, and methods text.
 
-## Hookworm-style demonstration data
+## Bundled sample data
 
-This release includes synthetic demonstration datasets using *Ancylostoma caninum* labels:
+The `sample_data` folder includes real experimental datasets for egg hatch, larval development, and motility, plus an illustrative survival/mortality example using *Ancylostoma caninum* labels:
 
-| Assay | Isolates | Drug | Raw endpoint |
-|---|---|---|---|
-| Egg hatch | WMD vs KGR | Thiabendazole | Eggs and L1 larvae |
-| Larval development | WMD vs KGR | Ivermectin | Developed and undeveloped larvae |
-| Motility | WMD vs KGR | Ivermectin | Continuous activity units |
-| Survival/mortality | WMD vs KGR | Ivermectin | Alive and dead counts |
+| Assay | Isolates | Drug | Raw endpoint | Provenance |
+|---|---|---|---|---|
+| Egg hatch | WMD vs KGR | Thiabendazole | Eggs and L1 larvae | Real experimental data |
+| Larval development | WMD vs KGR | Ivermectin | Developed and undeveloped larvae | Real experimental data |
+| Motility | WMD vs KGR | Ivermectin | Continuous activity units | Real experimental data |
+| Survival/mortality | WMD vs KGR | Ivermectin | Alive and dead counts | Illustrative example |
 
-The bundled datasets are synthetic demonstration datasets for testing the interface and workflow. They are not primary experimental measurements and should not be cited as biological results.
+See `sample_data/DATA_DESCRIPTION.md` for the file-by-file description.
 
 ## Quick start
 
@@ -146,7 +146,7 @@ Assay-specific raw columns:
 ```text
 app.py                         Streamlit app
 arstat_core.py                 Reusable analysis backend
-sample_data/                   Synthetic hookworm-style examples
+sample_data/                   Bundled real-data examples plus illustrative survival data
 templates/                     Blank CSV templates
 tests/                         Unit tests
 scripts/                       Benchmark and validation scripts
