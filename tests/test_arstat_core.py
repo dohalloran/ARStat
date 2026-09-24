@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from arstat_core import (
+    ASSAY_PRESETS,
     INFO_PREFIX,
     assay_warnings,
     calculate_count_response,
@@ -47,6 +48,10 @@ def _assert_basic_fit(prepared, group_cols, dose_col="dose"):
     return summary, rr
 
 
+
+def test_supported_assays_are_exactly_the_three_validated_workflows():
+    assert list(ASSAY_PRESETS) == ["Egg hatch", "Larval development", "Motility"]
+
 def test_egg_hatch_workflow():
     df = pd.read_csv("sample_data/egg_hatch_example.csv")
     prepared, warnings = calculate_count_response(
@@ -72,16 +77,6 @@ def test_larval_development_workflow():
     assert high_mean > zero_mean
     summary, _ = _assert_basic_fit(prepared, group_cols=["drug", "strain"])
     assert (summary["top"] > summary["bottom"]).all()
-
-
-def test_survival_workflow():
-    df = pd.read_csv("sample_data/survival_example.csv")
-    prepared, warnings = calculate_count_response(
-        df, success_col="dead", failure_col="alive", assay_name="Survival"
-    )
-    assert warnings == []
-    assert prepared["response_fraction"].between(0, 1).all()
-    _assert_basic_fit(prepared, group_cols=["drug", "strain"])
 
 
 def test_motility_workflow_normalizes_to_group_controls_and_fits_ic50():
@@ -162,9 +157,9 @@ def test_count_pairwise_tests_include_multiple_testing_adjustment():
 
 
 def test_bootstrap_resistance_ratio_confidence_interval_columns():
-    df = pd.read_csv("sample_data/survival_example.csv")
+    df = pd.read_csv("sample_data/egg_hatch_example.csv")
     prepared, _ = calculate_count_response(
-        df, success_col="dead", failure_col="alive", assay_name="Survival"
+        df, success_col="L1", failure_col="eggs", assay_name="Egg hatch"
     )
     summary, results = fit_dose_response(
         prepared, group_cols=["drug", "strain"], dose_col="dose", n_boot=30
@@ -210,15 +205,8 @@ def test_raw_outcome_columns_exist_for_traditional_plot_mode():
         failure_col="undeveloped",
         assay_name="Larval development",
     )
-    survival, _ = calculate_count_response(
-        pd.read_csv("sample_data/survival_example.csv"),
-        success_col="dead",
-        failure_col="alive",
-        assay_name="Survival",
-    )
     assert "hatch_fraction" in egg.columns
     assert "development_fraction" in larval.columns
-    assert "survival_fraction" in survival.columns
 
 
 def test_traditional_curve_is_complement_of_inhibition_fit():
@@ -502,7 +490,6 @@ def test_detect_raw_assay_signatures_for_bundled_examples():
         "egg_hatch_example.csv": ["Egg hatch"],
         "larval_development_example.csv": ["Larval development"],
         "motility_example.csv": ["Motility"],
-        "survival_example.csv": ["Survival"],
     }
     for filename, assay_types in expected.items():
         df = pd.read_csv(f"sample_data/{filename}")
@@ -517,7 +504,7 @@ def test_normalized_xy_templates_are_not_misclassified_as_raw_assays():
 
 def test_infer_declared_assay_from_metadata_column():
     assert infer_declared_assay(pd.DataFrame({"assay": ["egg_hatch", "egg_hatch"]})) == "Egg hatch"
-    assert infer_declared_assay(pd.DataFrame({"assay": ["mortality", "survival"]})) == "Survival"
+    assert infer_declared_assay(pd.DataFrame({"assay": ["mortality", "survival"]})) is None
     mixed = pd.DataFrame({"assay": ["egg_hatch", "motility"]})
     assert detect_declared_assays(mixed) == ["Egg hatch", "Motility"]
     assert infer_declared_assay(mixed) is None

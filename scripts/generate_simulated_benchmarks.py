@@ -1,7 +1,7 @@
 """Generate simulated ARStat benchmark datasets with known IC50 values.
 
 This script creates synthetic datasets for egg hatch, larval development,
-motility, and survival/mortality workflows, then fits them using ARStat's core
+and motility workflows, then fits them using ARStat's core
 analysis functions. The outputs can be used in validation reports and figures.
 
 Run from the repository root:
@@ -58,16 +58,6 @@ ASSAYS = {
         "failure_col": "undeveloped",
         "total": 75,
     },
-    "Survival": {
-        "kind": "count",
-        "file": "simulated_survival.csv",
-        "assay_label": "survival",
-        "drug": "ivermectin",
-        "unit": "nM",
-        "success_col": "dead",
-        "failure_col": "alive",
-        "total": 30,
-    },
     "Motility": {
         "kind": "continuous",
         "file": "simulated_motility.csv",
@@ -103,12 +93,10 @@ def make_count_assay(assay_name, meta):
                 affected = int(RNG.binomial(n, p_effect))
                 unaffected = n - affected
 
-                if assay_name in ["Egg hatch", "Larval development"]:
-                    success = unaffected
-                    failure = affected
-                else:  # Survival: success is dead/affected
-                    success = affected
-                    failure = unaffected
+                # For the supported count assays, the raw biological outcome
+                # (hatched/developed) declines as drug effect increases.
+                success = unaffected
+                failure = affected
 
                 rows.append(
                     {

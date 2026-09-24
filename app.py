@@ -65,7 +65,7 @@ with st.expander("What ARStat does", expanded=False):
         """
         ARStat turns raw assay counts or normalized replicate responses into standardized dose-response outputs.
 
-        The bundled sample-data folder includes real experimental datasets for egg hatch, larval development, and motility, plus an illustrative survival/mortality example.
+        The bundled sample-data folder includes real experimental datasets for egg hatch, larval development, and motility.
 
         - assay-specific response calculations
         - input validation and warnings
@@ -76,7 +76,7 @@ with st.expander("What ARStat does", expanded=False):
         - per-dose pairwise tests with multiple-testing-adjusted p-values
         - downloadable CSV tables, Excel workbooks, and publication-ready PNG figures
 
-        This version supports egg hatch, larval development, motility, and survival/mortality assays.
+        This version supports egg hatch, larval development, and motility assays.
         """
     )
 
@@ -154,7 +154,7 @@ def make_dose_response_plot(
         )
 
     # Fitted 4PL curves. The model is always fit to effect response
-    # (inhibition/mortality). In traditional raw-outcome mode, display the
+    # (inhibition/affected response). In traditional raw-outcome mode, display the
     # complementary raw outcome so the curves decline with increasing dose.
     for result_key, result in fit_results.items():
         if not result.converged:
@@ -220,8 +220,6 @@ def raw_plot_settings(assay_name: str) -> tuple[str, str]:
         return "hatch_fraction", "Hatch rate (%)"
     if assay_name == "Larval development":
         return "development_fraction", "Development rate (%)"
-    if assay_name == "Survival":
-        return "survival_fraction", "Survival (%)"
     if assay_name == "Motility":
         return "motility_fraction", "Relative motility (%)"
     return "response_fraction", "Response (%)"
@@ -264,21 +262,18 @@ sample_options = {
     "Egg hatch example": "egg_hatch_example.csv",
     "Larval development example": "larval_development_example.csv",
     "Motility example": "motility_example.csv",
-    "Survival example": "survival_example.csv",
 }
 
 example_presets = {
     "Egg hatch example": {"assay": "Egg hatch", "reference": "WMD"},
     "Larval development example": {"assay": "Larval development", "reference": "WMD"},
     "Motility example": {"assay": "Motility", "reference": "WMD"},
-    "Survival example": {"assay": "Survival", "reference": "WMD"},
 }
 
 template_files = {
     "Egg hatch template": "egg_hatch_template.csv",
     "Larval development template": "larval_development_template.csv",
     "Motility template": "motility_template.csv",
-    "Survival template": "survival_template.csv",
     "Normalized XY single-dataset template": "normalized_xy_replicates_template.csv",
     "Normalized XY multi-group template": "normalized_xy_multigroup_template.csv",
 }
@@ -316,8 +311,7 @@ def show_download_library(location=st.sidebar):
     if available_samples:
         location.markdown("**Sample data**")
         location.caption(
-            "Includes real experimental data for egg hatch, larval development, and motility; "
-            "the survival/mortality file is an illustrative example."
+            "Includes real experimental data for egg hatch, larval development, and motility."
         )
         for label, filename in available_samples.items():
             location.download_button(
@@ -348,7 +342,7 @@ if page == "Why ARStat / comparison":
     st.markdown(
         """
         ARStat is being built for a specific gap: parasitology labs often collect raw count data
-        from egg hatch, larval development, motility, and mortality/survival assays,
+        from egg hatch, larval development, and motility assays,
         but the analysis is commonly performed with a mixture of spreadsheets, general dose-response tools,
         and manually edited figures.
 
@@ -356,7 +350,7 @@ if page == "Why ARStat / comparison":
 
         ARStat converts raw assay measurements into a consistent, reproducible analysis workflow:
 
-        - assay-specific response calculations, such as hatch inhibition, development inhibition, motility inhibition, or mortality
+        - assay-specific response calculations, such as hatch inhibition, development inhibition, or motility inhibition
         - automatic data checks for missing controls, too few dose levels, zero counts, and non-numeric dose entries
         - IC50 estimation with a four-parameter logistic model
         - resistance ratios relative to a selected susceptible/control isolate
@@ -411,7 +405,6 @@ if page == "How to / user guide":
             {"Assay": "Egg hatch", "Required measurements": "L1 and eggs", "Default response": "Hatch inhibition = 1 - L1/(L1 + eggs)"},
             {"Assay": "Larval development", "Required measurements": "developed and undeveloped", "Default response": "Development inhibition = 1 - developed/(developed + undeveloped)"},
             {"Assay": "Motility", "Required measurements": "One motility/activity value per replicate or well", "Default response": "Motility inhibition = 1 - measurement/mean zero-dose measurement"},
-            {"Assay": "Survival", "Required measurements": "dead and alive", "Default response": "Mortality / affected fraction = dead/(dead + alive)"},
         ]
     )
     st.dataframe(required, width='stretch')
@@ -888,7 +881,6 @@ else:
     raw_example = {
         "Egg hatch": "% hatched",
         "Larval development": "% developed",
-        "Survival": "% surviving",
         "Motility": "% motility",
     }.get(assay_name, "raw response")
     normalized_direction_label = st.sidebar.radio(
@@ -952,7 +944,7 @@ plot_display = st.sidebar.radio(
         "Inhibition / affected response (ascending curve)",
     ],
     index=0,
-    help="The IC50 model is fit to inhibition/mortality. The traditional view displays the complementary raw assay outcome, such as hatch rate, motility, or survival, so the curve declines with increasing dose.",
+    help="The IC50 model is fit to inhibition/affected response. The traditional view displays the complementary raw assay outcome, such as hatch rate, development, or motility, so the curve declines with increasing dose.",
 )
 
 preferred_ref = st.session_state.get("reference_group_select", None)
@@ -1045,11 +1037,7 @@ st.caption(f"Loaded {len(df):,} rows and {len(df.columns):,} columns. Confirm co
 for cleanup_note in upload_cleanup_notes:
     st.info(cleanup_note)
 if source == "Use example data":
-    provenance = (
-        "This bundled file contains real experimental sample data."
-        if assay_name in {"Egg hatch", "Larval development", "Motility"}
-        else "This survival/mortality file is an illustrative example dataset."
-    )
+    provenance = "This bundled file contains real experimental sample data."
     st.success(f"Loaded {sample_label}. Assay type is locked to **{assay_name}** for this example. {provenance}")
 st.dataframe(df.head(20), width='stretch')
 
@@ -1309,7 +1297,7 @@ def render_arstat_results(results: dict):
     if results.get("plot_mode") == "raw_outcome":
         plot_caption = (
             "Dose-response curve. In traditional raw-outcome mode, the fitted "
-            "inhibition/mortality model is displayed as the complementary raw "
+            "inhibition/affected-response model is displayed as the complementary raw "
             "assay outcome, so curves decline with increasing dose. Zero-dose "
             "controls are shown at the symbolic left tick labelled 0 because "
             "log-scaled axes cannot display x=0."
@@ -1425,4 +1413,4 @@ if stored_config != current_config:
 if stored_results is not None:
     render_arstat_results(stored_results)
 
-st.caption("ARStat v1.2.1. Sample data include real egg-hatch, larval-development, and motility datasets plus an illustrative survival dataset; downloads reuse stored results.")
+st.caption("ARStat v1.3.0. Sample data include real egg-hatch, larval-development, and motility datasets; downloads reuse stored results.")

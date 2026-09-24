@@ -16,7 +16,6 @@ For raw motility data, ARStat normalizes activity to the mean zero-dose control 
 | Egg hatch workflow | Partial | Partial | Yes |
 | Larval development workflow | Partial | Partial | Yes |
 | Motility workflow with control normalization | Partial | Partial | Yes |
-| Survival/mortality workflow | Partial | Partial | Yes |
 | Wide XY replicate import | Yes | Yes | Yes |
 | Automatic IC50 and confidence intervals | Partial | Yes | Yes |
 | Fold-resistance calculation | Partial | Partial | Yes |

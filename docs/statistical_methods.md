@@ -43,16 +43,6 @@ The fitted response is motility inhibition. Relative motility is retained for th
 
 Values can instead be imported as already normalized percentages (`0–100`) or fractions (`0–1`). The user specifies whether imported values represent retained motility or motility inhibition. Values outside the biological 0–1 interval are flagged but preserved because control normalization, background correction, hypermotility, or ordinary replicate variation can produce observations below 0% or above 100%. The fitted 4PL asymptotes remain constrained to 0–1.
 
-### Survival/mortality assay
-
-Mortality fraction is calculated as:
-
-```text
-dead / (dead + alive)
-```
-
-The modeled drug effect is mortality/affected fraction. Survival fraction is retained for the traditional descending plot.
-
 ## Dose-response model
 
 ARStat fits an increasing four-parameter logistic model on the log10 dose scale:
@@ -65,7 +55,7 @@ IC50 is returned on the original dose scale as `10^logIC50`.
 
 IC50 is the dose corresponding to the midpoint between the fitted lower and upper asymptotes. If the fitted top response is below 100%, the IC50 is not necessarily the dose producing an absolute 50% response.
 
-For motility, the result is a motility-inhibition IC50 under the imported activity definition and normalization. It is not interchangeable with a survival or lethal-concentration endpoint.
+For motility, the result is a motility-inhibition IC50 under the imported activity definition and normalization. It should not be interpreted automatically as a lethal-concentration endpoint.
 
 ## Confidence intervals
 

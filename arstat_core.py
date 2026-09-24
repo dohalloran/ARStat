@@ -100,15 +100,6 @@ ASSAY_PRESETS = {
         "effect_fraction": "inhibition_fraction",
         "effect_label": "Development inhibition",
     },
-    "Survival": {
-        "success_default": "dead",
-        "failure_default": "alive",
-        "success_label": "Dead / affected",
-        "failure_label": "Alive / unaffected",
-        "raw_fraction": "mortality_fraction",
-        "effect_fraction": "mortality_fraction",
-        "effect_label": "Mortality / affected fraction",
-    },
     "Motility": {
         "measurement_default": "motility",
         "measurement_label": "Motility / activity measurement",
@@ -127,10 +118,6 @@ ASSAY_COLUMN_ALIASES = {
     "Larval development": {
         "success": ["developed", "developed larvae", "l3", "l3 larvae", "infective larvae"],
         "failure": ["undeveloped", "undeveloped larvae", "l1", "l2", "l1 l2", "early larvae"],
-    },
-    "Survival": {
-        "success": ["dead", "affected", "nonviable", "non viable"],
-        "failure": ["alive", "unaffected", "viable", "surviving"],
     },
 }
 
@@ -232,10 +219,6 @@ ASSAY_VALUE_ALIASES = {
     "larval-development": "Larval development",
     "lda": "Larval development",
     "motility": "Motility",
-    "survival": "Survival",
-    "mortality": "Survival",
-    "survival mortality": "Survival",
-    "survival/mortality": "Survival",
 }
 
 
@@ -271,7 +254,7 @@ def detect_raw_assay_types(df: pd.DataFrame) -> list[str]:
     detected: list[str] = []
     columns = list(df.columns)
 
-    for assay_name in ("Egg hatch", "Larval development", "Survival"):
+    for assay_name in ("Egg hatch", "Larval development"):
         success, failure = suggest_count_columns(columns, assay_name)
         if success is not None and failure is not None:
             detected.append(assay_name)
@@ -438,7 +421,7 @@ def calculate_count_response(
     failure_col: str,
     assay_name: str,
 ) -> tuple[pd.DataFrame, list[str]]:
-    """Calculate count-based fractions for egg hatch, LDA, or survival assays."""
+    """Calculate count-based fractions for egg hatch or larval-development assays."""
     if assay_name == "Motility":
         raise ValueError("Motility is a continuous-response assay; use prepare_motility_response().")
     if success_col == failure_col:
@@ -470,12 +453,7 @@ def calculate_count_response(
 
     out[raw_fraction] = out["success_count"] / out["total_count"]
 
-    if assay_name in ["Egg hatch", "Larval development"]:
-        out[effect_fraction] = 1 - out[raw_fraction]
-    else:
-        # Survival preset treats success as dead/affected, so raw fraction is already effect.
-        out[effect_fraction] = out[raw_fraction]
-        out["survival_fraction"] = 1 - out[raw_fraction]
+    out[effect_fraction] = 1 - out[raw_fraction]
 
     out["response_fraction"] = out[effect_fraction].clip(0, 1)
     out["response_percent"] = out["response_fraction"] * 100
@@ -638,8 +616,8 @@ def prepare_normalized_xy_response(
         distinguish percentages from fractions; ``"percent"`` divides values
         by 100; ``"fraction"`` leaves them on the 0--1 scale.
     response_direction
-        ``"raw_outcome"`` means hatch, development, or survival decreases as dose increases. ``"effect"`` means the imported
-        values already represent inhibition, mortality, or affected response.
+        ``"raw_outcome"`` means hatch, development, or motility decreases as dose increases. ``"effect"`` means the imported
+        values already represent inhibition or affected response.
     """
     id_cols = [dose_col]
     for optional_col in (group_col, drug_col):
@@ -742,7 +720,6 @@ def prepare_normalized_xy_response(
     raw_col = {
         "Egg hatch": "hatch_fraction",
         "Larval development": "development_fraction",
-        "Survival": "survival_fraction",
         "Motility": "motility_fraction",
     }[assay_name]
     effect_col = ASSAY_PRESETS[assay_name]["effect_fraction"]
@@ -772,8 +749,6 @@ def prepare_normalized_xy_response(
     long["assay"] = assay_name
     long[raw_col] = raw
     long[effect_col] = effect
-    if assay_name == "Survival":
-        long["mortality_fraction"] = effect
     if assay_name == "Motility":
         long["motility_inhibition_fraction"] = effect
     long["response_fraction"] = effect
@@ -896,7 +871,7 @@ def fit_dose_response(
             if np.isfinite(bottom) and np.isfinite(top) and top < bottom:
                 result.message += (
                     "; fitted top is below fitted bottom, indicating a decreasing dose-response curve. "
-                    "For inhibition/mortality endpoints this may indicate swapped response columns, wrong assay settings, or poor data quality."
+                    "For inhibition/affected-response endpoints this may indicate swapped response columns, wrong assay settings, or poor data quality."
                 )
 
             if n_boot > 0:

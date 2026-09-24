@@ -16,7 +16,6 @@ EXAMPLES = {
     "Egg hatch example": ("Egg hatch", "µM"),
     "Larval development example": ("Larval development", "nM"),
     "Motility example": ("Motility", "nM"),
-    "Survival example": ("Survival", "nM"),
 }
 
 
@@ -30,8 +29,8 @@ def _app():
 def test_example_selection_forces_and_locks_matching_assay_type():
     at = _app()
     # Visit examples in a scrambled order, including revisits, to catch stale widget state.
-    order = ["Survival example", "Egg hatch example", "Motility example",
-             "Larval development example", "Egg hatch example", "Survival example"]
+    order = ["Motility example", "Egg hatch example",
+             "Larval development example", "Egg hatch example", "Motility example"]
     for label in order:
         at.selectbox(key="sample_label").select(label).run()
         assert not at.exception

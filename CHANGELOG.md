@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased — input-state and data-validation safeguards
+## v1.3.0 — validation safeguards and focused three-assay scope
+
+- Removed the survival/mortality assay from the ARStat user interface and backend assay presets.
+- Removed the illustrative survival sample dataset, survival template, simulated survival benchmark, validation outputs, and survival-specific tests.
+- Updated benchmark and validation scripts so they generate only egg hatch, larval development, and motility outputs.
+- Updated the README, user guide, statistical methods, validation plan, comparison documentation, and citation metadata to define ARStat around three supported workflows.
+- All three bundled example workflows now use real experimental data.
+
 
 - Verified the post-debug build independently and added two follow-up safeguards.
 - Raised the declared minimum Streamlit version to 1.49.0 because `st.dataframe(..., width="stretch")` is not supported by Streamlit 1.43–1.48.
@@ -8,13 +15,12 @@
 - Normalize equivalent molar unit labels such as `uM`, `μM`, and `µM` before mixed-unit validation.
 - Uploaded-file parse failures now produce a clear in-app error instead of an uncaught exception.
 - Added two core regression tests for content-aware data signatures and dose-unit normalization.
-- CSVs saved by Excel on Windows (Windows-1252 encoding, where `µ` is not valid UTF-8) are now read correctly instead of being rejected as unreadable; files that are not text at all get a plain-language error. Added a regression test; the full suite now contains 38 tests.
+- CSVs saved by Excel on Windows (Windows-1252 encoding, where `µ` is not valid UTF-8) are now read correctly instead of being rejected as unreadable; files that are not text at all get a plain-language error. Added a regression test for this encoding path.
 - Locked the assay type to the selected bundled example so the Example and Assay type selectors cannot disagree.
 - Added raw-assay signature detection to block raw count/activity tables from being analyzed as normalized XY replicate input.
 - Added preflight checks for nonnumeric and negative doses, nonnumeric response columns, reused column roles, mixed dose units, duplicate rows, and suspicious non-integer count values.
 - Added assay-metadata and raw-column mismatch guards before model fitting.
 - Automatically use and lock a single dose unit declared in the data, preventing example files in nM from being mislabeled as µM.
-- Clarified that the bundled egg hatch, larval development, and motility sample files contain real experimental data; the survival/mortality file remains illustrative.
 - Fixed a duplicated concentration-column phrase in generated Methods text.
 - Fixed the normalized XY Dose/X column defaulting to the first column (e.g. `Group`) when the header is capitalized, which made the bundled multi-group XY template fail on upload. Column defaults for dose, strain/group, drug, and replicate are now matched case-insensitively.
 - Disabled normalized XY for any long-form upload containing a `replicate` or `well` column, not only files with recognized measurement names. Previously a motility file with a column such as `thrashes` could be run as XY, with the replicate ID (1–4) silently analyzed as the response.
@@ -26,7 +32,7 @@
 - An assay column that contradicts the measurement columns now gives one explicit error, and Assay type is pre-selected from the measurement columns.
 - The raw motility measurement column now defaults to the first numeric, non-ID column when no `motility`/`activity` column exists.
 - Regenerated `benchmarks/` and `validation_outputs/`, which were missing all motility outputs referenced in the docs.
-- Added 9 regression tests, including Streamlit AppTest UI tests for the Example → Assay type lock and for end-to-end runs of every example. The suite now contains 35 tests.
+- Added regression tests, including Streamlit AppTest UI tests for the Example → Assay type lock and for end-to-end runs of every example. After the v1.3.0 scope change, the suite contains 38 tests when Streamlit is installed (36 core tests plus 2 UI tests).
 
 ## v1.2.1 — normalized input and column-mapping safeguards
 

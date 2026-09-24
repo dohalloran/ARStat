@@ -47,13 +47,6 @@ EXAMPLES = {
         "response_direction": "raw_outcome",
         "reference": "WMD",
     },
-    "Survival": {
-        "path": ROOT / "sample_data" / "survival_example.csv",
-        "kind": "count",
-        "success_col": "dead",
-        "failure_col": "alive",
-        "reference": "WMD",
-    },
 }
 
 

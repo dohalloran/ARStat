@@ -1,4 +1,4 @@
-# ARStat v1.2.1
+# ARStat v1.3.0
 
 [![Tests](https://github.com/dohalloran/ARStat/actions/workflows/tests.yml/badge.svg)](https://github.com/dohalloran/ARStat/actions/workflows/tests.yml)
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://arstat-jm7varr6fck8uajj4lgs6t.streamlit.app/)
@@ -7,25 +7,23 @@
 
 ARStat is a Streamlit web application and scriptable Python backend for reproducible statistical analysis and visualization of anthelmintic dose-response assays.
 
-ARStat supports four assay workflows:
+ARStat supports three assay workflows:
 
 - **Egg hatch assay**
 - **Larval development assay**
 - **Motility assay**
-- **Survival/mortality assay**
 
 The app starts from raw assay measurements or normalized XY replicate tables, calculates assay-specific response variables, fits four-parameter dose-response curves, estimates IC50 values, calculates fold-resistance versus a selected reference group, performs exploratory dose-level tests with multiple-testing correction, and exports analysis tables, plots, Excel workbooks, and methods text.
 
 ## Bundled sample data
 
-The `sample_data` folder includes real experimental datasets for egg hatch, larval development, and motility, plus an illustrative survival/mortality example using *Ancylostoma caninum* labels:
+The `sample_data` folder includes real experimental datasets for all three supported workflows, using *Ancylostoma caninum* labels:
 
 | Assay | Isolates | Drug | Raw endpoint | Provenance |
 |---|---|---|---|---|
 | Egg hatch | WMD vs KGR | Thiabendazole | Eggs and L1 larvae | Real experimental data |
 | Larval development | WMD vs KGR | Ivermectin | Developed and undeveloped larvae | Real experimental data |
 | Motility | WMD vs KGR | Ivermectin | Continuous activity units | Real experimental data |
-| Survival/mortality | WMD vs KGR | Ivermectin | Alive and dead counts | Illustrative example |
 
 See `sample_data/DATA_DESCRIPTION.md` for the file-by-file description.
 
@@ -139,14 +137,13 @@ Assay-specific raw columns:
 - Egg hatch: `eggs`, `L1`
 - Larval development: `developed`, `undeveloped`; conventional `L3` and `L1` headings are suggested as developed and undeveloped, respectively, but must be confirmed against the protocol
 - Motility: one continuous activity or motility column, such as `motility`
-- Survival/mortality: `alive`, `dead`
 
 ## Repository structure
 
 ```text
 app.py                         Streamlit app
 arstat_core.py                 Reusable analysis backend
-sample_data/                   Bundled real-data examples plus illustrative survival data
+sample_data/                   Bundled real-data examples for all supported assays
 templates/                     Blank CSV templates
 tests/                         Unit tests
 scripts/                       Benchmark and validation scripts
