@@ -26,6 +26,7 @@ from arstat_core import (
     detect_long_form_layout,
     detect_raw_assay_types,
     detect_declared_assays,
+    detect_unrecognized_assay_labels,
     find_column,
     find_duplicate_headers,
     infer_declared_assay,
@@ -65,7 +66,7 @@ with st.expander("What ARStat does", expanded=False):
         """
         ARStat turns raw assay counts or normalized replicate responses into standardized dose-response outputs.
 
-        The bundled sample-data folder includes real experimental datasets for egg hatch, larval development, and motility.
+        The bundled sample-data folder contains simulated/illustrative examples for egg hatch, larval development, and motility; empirical validation data are provided separately with the manuscript supplement.
 
         - assay-specific response calculations
         - input validation and warnings
@@ -132,7 +133,8 @@ def make_dose_response_plot(
     label_col = "__plot_group"
     plot_data = data.copy()
     plot_data[dose_col] = pd.to_numeric(plot_data[dose_col], errors="coerce")
-    plot_data[label_col] = plot_data[group_cols].astype(str).agg(" | ".join, axis=1)
+    # map(str) rather than astype(str): pandas 3 keeps missing values as NaN after astype(str).
+    plot_data[label_col] = plot_data[group_cols].apply(lambda col: col.map(str)).agg(" | ".join, axis=1)
 
     positive_all = plot_data.loc[plot_data[dose_col] > 0, dose_col].dropna().astype(float)
     if positive_all.empty:
@@ -144,12 +146,19 @@ def make_dose_response_plot(
 
     plot_data["__plot_dose"] = plot_data[dose_col].where(plot_data[dose_col] > 0, zero_plot_dose)
 
+    # One explicit color per group so each group's points, fitted curve, and IC50
+    # marker always match (Matplotlib keeps separate color cycles for scatter and plot).
+    palette = plt.rcParams["axes.prop_cycle"].by_key().get("color", ["C0"])
+    group_labels = list(dict.fromkeys(plot_data[label_col].tolist()))
+    group_colors = {label: palette[i % len(palette)] for i, label in enumerate(group_labels)}
+
     # Raw points. Zero-dose controls are shown at a symbolic left-edge tick.
-    for group_key, group_data in plot_data.groupby(label_col, dropna=False):
+    for group_key, group_data in plot_data.groupby(label_col, dropna=False, sort=False):
         ax.scatter(
             group_data["__plot_dose"].astype(float),
             group_data[response_col].astype(float) * 100,
             alpha=0.75,
+            color=group_colors.get(group_key),
             label=f"{group_key} raw",
         )
 
@@ -162,7 +171,7 @@ def make_dose_response_plot(
         group_label = " | ".join(map(str, result_key))
         sub = data.copy()
         for col, value in zip(group_cols, result_key):
-            sub = sub.loc[sub[col].astype(str) == str(value)]
+            sub = sub.loc[sub[col].map(str) == str(value)]
         positive_doses = sub.loc[sub[dose_col] > 0, dose_col].dropna().astype(float)
         if positive_doses.empty:
             continue
@@ -178,8 +187,9 @@ def make_dose_response_plot(
         )
         if plot_mode == "raw_outcome":
             y_curve = 1 - y_curve
-        ax.plot(x_curve, y_curve * 100, label=f"{group_label} 4PL fit")
-        ax.axvline(result.ic50, linestyle="--", alpha=0.35)
+        color = group_colors.get(group_label)
+        ax.plot(x_curve, y_curve * 100, color=color, label=f"{group_label} 4PL fit")
+        ax.axvline(result.ic50, color=color, linestyle="--", alpha=0.35)
 
     # Show a true zero-dose label despite using a log-scaled axis.
     positive_ticks = sorted(pd.unique(positive_all))
@@ -233,9 +243,10 @@ def make_method_text(
     n_boot: int,
     dose_unit: str = "",
     continuous_response: bool = False,
+    normalized_input: bool = False,
 ) -> str:
     bootstrap_sentence = (
-        f"Bootstrap 95% confidence intervals for IC50 were estimated using {n_boot} within-group resamples. "
+        f"Bootstrap 95% percentile confidence intervals for IC50 were estimated from {n_boot} resamples of the replicate observations within each fitted curve. "
         "When available, fold-resistance confidence intervals were estimated from stored bootstrap IC50 samples; otherwise, approximate log-scale confidence intervals were calculated from IC50 confidence limits. "
         if n_boot > 0
         else "Bootstrap confidence intervals were not requested, so fold-resistance confidence intervals may be unavailable. "
@@ -246,13 +257,15 @@ def make_method_text(
         if continuous_response
         else "Dose-level pairwise tests were reported as exploratory Fisher exact tests with Benjamini-Hochberg and Bonferroni adjusted p-values. Fisher exact tests pooled counts across replicate wells at each dose and therefore do not model replicate-to-replicate overdispersion."
     )
+    input_description = "normalized replicate responses" if normalized_input else "raw measurements"
     return (
         f"Dose-response data were analyzed using ARStat. For the {assay_name.lower()} assay, "
-        f"raw measurements were converted to {response_label.lower()} and modeled as a function of "
+        f"{input_description} were converted to {response_label.lower()} and modeled as a function of "
         f"the concentration column '{dose_col}'."
         f"{unit_sentence} Curves were fit separately for each combination of "
         f"{', '.join(group_cols)} using a four-parameter logistic model. IC50 values were estimated "
         "as the midpoint between the fitted lower and upper asymptotes of the model; therefore, IC50 is relative to the fitted response range and is not necessarily the dose giving 50% absolute response when the fitted top or bottom differs from 100% or 0%. "
+        "The asymptotes were constrained to 0-1 and the Hill slope to 0.05-10, and zero-dose observations were evaluated at one-tenth of the lowest positive dose because log10(0) is undefined. "
         f"{bootstrap_sentence}"
         "Fold resistance was calculated by dividing each IC50 estimate by the IC50 of the user-selected susceptible/reference group. "
         f"{test_sentence}"
@@ -262,6 +275,17 @@ sample_options = {
     "Egg hatch example": "egg_hatch_example.csv",
     "Larval development example": "larval_development_example.csv",
     "Motility example": "motility_example.csv",
+}
+
+# Provenance shown when an example is loaded. All bundled examples are
+# simulated/illustrative workflow demonstrations, not empirical validation data.
+SAMPLE_PROVENANCE = {
+    "Egg hatch example": "This bundled file contains simulated/illustrative egg-hatch count data; it is not an experimental validation dataset.",
+    "Larval development example": "This bundled file contains simulated/illustrative larval-development count data; it is not an experimental validation dataset.",
+    "Motility example": (
+        "This bundled file contains simulated motility data generated from a known four-parameter logistic model "
+        "(it demonstrates the raw-activity workflow and is not an experimental measurement)."
+    ),
 }
 
 example_presets = {
@@ -311,7 +335,7 @@ def show_download_library(location=st.sidebar):
     if available_samples:
         location.markdown("**Sample data**")
         location.caption(
-            "Includes real experimental data for egg hatch, larval development, and motility."
+            "All three bundled examples are simulated/illustrative workflow demonstrations, not empirical validation datasets."
         )
         for label, filename in available_samples.items():
             location.download_button(
@@ -567,6 +591,14 @@ if input_layout == "Normalized XY replicate table" and detected_raw_assays:
         "Switch Input layout to 'Raw assay measurements'."
     )
 
+unrecognized_assay_labels = detect_unrecognized_assay_labels(df)
+if unrecognized_assay_labels:
+    preflight_warnings.append(
+        "The assay metadata column contains value(s) ARStat does not support: "
+        f"{', '.join(unrecognized_assay_labels)}. ARStat analyzes egg hatch, larval development, and motility assays only; "
+        "confirm that the selected Assay type and column mapping are appropriate for these data."
+    )
+
 if len(declared_assays) > 1:
     blocking_errors.append(
         "The assay metadata column contains multiple recognized assay types "
@@ -772,6 +804,14 @@ if input_layout == "Raw assay measurements":
                 "is mapped to both measurements."
             )
     strain_values = sorted([str(v) for v in df[strain_col].dropna().unique()]) if strain_col in df.columns else []
+    for column, label in ((strain_col, "Strain / isolate"), (drug_col, "Drug")):
+        if column != "None" and column in df.columns:
+            blank = df[column].isna() | df[column].astype("string").str.strip().eq("").fillna(False)
+            if blank.any():
+                preflight_warnings.append(
+                    f"{label} column '{column}' has {int(blank.sum())} blank cell(s). These rows will be fitted as a "
+                    "separate group labelled 'nan'; fill in the missing labels or remove those rows."
+                )
 
     # Catch column-role mistakes before model fitting.
     if strain_col == dose_col:
@@ -1037,7 +1077,7 @@ st.caption(f"Loaded {len(df):,} rows and {len(df.columns):,} columns. Confirm co
 for cleanup_note in upload_cleanup_notes:
     st.info(cleanup_note)
 if source == "Use example data":
-    provenance = "This bundled file contains real experimental sample data."
+    provenance = SAMPLE_PROVENANCE.get(sample_label, "")
     st.success(f"Loaded {sample_label}. Assay type is locked to **{assay_name}** for this example. {provenance}")
 st.dataframe(df.head(20), width='stretch')
 
@@ -1115,6 +1155,16 @@ def compute_arstat_results():
     statistical_notes.append(
         "IC50 values are estimated from the fitted dose-response curve and represent the dose corresponding to the midpoint between the fitted lower and upper asymptotes. Therefore, if the maximum fitted response is below 100%, the IC50 is not necessarily the dose producing an absolute 50% response."
     )
+    statistical_notes.append(
+        "Check the IC50 table for estimates on a parameter bound (bottom or top at 0 or 1, Hill slope at 0.05 or 10). "
+        "A Hill slope of 10 usually means no tested concentration falls inside the response transition, so the midpoint is poorly determined."
+    )
+    if n_boot > 0:
+        statistical_notes.append(
+            "Bootstrap IC50 intervals resample replicate rows within each curve and ignore plate, day, and experiment structure. "
+            "In simulations with 3 to 6 wells per concentration, nominal 95% intervals contained the true IC50 in about 91-92% of data sets, "
+            "so treat them as approximate."
+        )
 
     fit_summary, fit_results = fit_dose_response(
         analysis_df,
@@ -1210,6 +1260,7 @@ def compute_arstat_results():
         n_boot=n_boot,
         dose_unit=dose_unit,
         continuous_response=continuous_response,
+        normalized_input=input_layout == "Normalized XY replicate table",
     )
     if input_layout == "Normalized XY replicate table":
         methods_text += (
@@ -1335,6 +1386,17 @@ def render_arstat_results(results: dict):
             "These tests are exploratory. Use the adjusted p-values for multiple comparisons. "
             "For count-based assays, Fisher exact tests pool replicate wells at each dose and do not model overdispersion."
         )
+    test_table = results["test_table"]
+    if (
+        results.get("continuous_response")
+        and "exact_min_p" in test_table.columns
+        and (pd.to_numeric(test_table["exact_min_p"], errors="coerce") > 0.05).any()
+    ):
+        st.info(
+            "Some comparisons have so few replicates that an exact two-sided Mann-Whitney test cannot reach P < 0.05 "
+            "(see the exact_min_p column; for 3 versus 3 replicates the minimum is 0.10). A non-significant result in "
+            "these rows is not evidence of no difference."
+        )
     if results["test_message"]:
         st.info(results["test_message"])
     st.dataframe(results["test_table"], width='stretch')
@@ -1413,4 +1475,4 @@ if stored_config != current_config:
 if stored_results is not None:
     render_arstat_results(stored_results)
 
-st.caption("ARStat v1.3.0. Sample data include real egg-hatch, larval-development, and motility datasets; downloads reuse stored results.")
+st.caption("ARStat v1.3.1. Bundled examples are simulated/illustrative workflow demonstrations; downloads reuse stored results.")

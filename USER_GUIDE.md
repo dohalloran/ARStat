@@ -24,7 +24,7 @@ Each workflow has its own response calculation and expected raw data columns.
 
 Use one of the bundled hookworm-style examples or upload a CSV/XLSX file. Choose either **Raw assay measurements** or **Normalized XY replicate table**. Blank templates are available in the app and in the `templates/` folder.
 
-The bundled egg hatch, larval development, and motility examples contain real experimental data. Selecting an example locks **Assay type** and the dose unit to match that file.
+All three bundled examples are simulated/illustrative workflow demonstrations rather than empirical validation datasets. The motility example is generated from a known four-parameter logistic model; the egg hatch and larval development examples are hookworm-style synthetic count datasets. Selecting an example locks **Assay type** and the dose unit to match that file.
 
 ARStat inspects each upload before analysis:
 
@@ -123,7 +123,7 @@ A value of 4 means that the test group requires approximately four times more dr
 Pairwise tests are exploratory dose-level comparisons:
 
 - Count assays pool success/failure counts and use Fisher exact tests.
-- Motility and normalized replicate inputs use Mann-Whitney U tests on replicate responses.
+- Motility and normalized replicate inputs use Mann-Whitney U tests on replicate responses. The `exact_min_p` column gives the smallest P value an exact test can return for the replicate numbers in that row (0.10 for 3 versus 3), so a non-significant result with few replicates is not evidence of no difference.
 
 Both Benjamini-Hochberg and Bonferroni adjusted p-values are reported.
 

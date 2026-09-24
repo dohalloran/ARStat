@@ -14,13 +14,18 @@ The included test suite checks:
 4. IC50 fitting and fold-resistance calculations.
 5. Multiple-testing correction columns.
 6. Normalized XY replicate import and multi-group handling.
-7. All three bundled hookworm-style example workflows.
+7. All three bundled simulated/illustrative example workflows (egg hatch, larval development, and motility).
+8. Missing-label handling in normalized XY import, NaN-safe group labels, unsupported-assay detection, and small-sample Mann-Whitney reporting.
 
 Run:
 
 ```bash
 pytest -q
 ```
+
+The suite contains 44 tests (41 core tests and 3 Streamlit AppTest UI tests).
+
+`scripts/simulate_bootstrap_coverage.py` estimates the coverage of the bootstrap IC50 intervals by simulation (see `docs/statistical_methods.md`).
 
 ## Validation layer 2: Simulated benchmark datasets with known IC50 values
 

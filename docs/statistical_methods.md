@@ -53,13 +53,21 @@ response = bottom + (top - bottom) / (1 + 10^((logIC50 - log10(dose)) * hill))
 
 IC50 is returned on the original dose scale as `10^logIC50`.
 
+Fitting details:
+
+- Parameters are estimated by bounded nonlinear least squares with SciPy `curve_fit` (trust-region reflective algorithm). Bounds are 0–1 for `bottom` and `top`, 0.05–10 for `hill`, and log10 of the smallest positive dose − 3 to log10 of the largest positive dose + 3 for `logIC50`. An estimate that sits on a bound (for example, a Hill slope of 10 when no concentration falls within the response transition) should be interpreted cautiously.
+- Zero-dose observations keep dose = 0 in all exported tables. Because log10(0) is undefined, the model evaluates them at one-tenth of the smallest positive dose in the fitted group.
+- Starting values are taken from the data, and the fit is retried with Hill-slope starting values of 1, 0.5, 2, and 4 if the first attempt fails.
+
 IC50 is the dose corresponding to the midpoint between the fitted lower and upper asymptotes. If the fitted top response is below 100%, the IC50 is not necessarily the dose producing an absolute 50% response.
 
 For motility, the result is a motility-inhibition IC50 under the imported activity definition and normalization. It should not be interpreted automatically as a lethal-concentration endpoint.
 
 ## Confidence intervals
 
-When enabled, ARStat estimates IC50 confidence intervals by nonparametric bootstrap resampling of rows within each fitted group. A confidence interval is reported when at least 25% of bootstrap fits converge and at least 20 bootstrap estimates are available.
+When enabled, ARStat estimates percentile 95% IC50 confidence intervals by nonparametric bootstrap resampling of rows within each fitted group. A confidence interval is reported when at least 25% of bootstrap fits converge and at least 20 bootstrap estimates are available.
+
+These intervals are approximate. Resampling is not stratified by dose, and it does not represent plate-, day-, or experiment-level hierarchy. `scripts/simulate_bootstrap_coverage.py` simulates egg hatch data with a known IC50. With 120 simulated data sets per design, nominal 95% intervals contained the true IC50 in 91% of data sets for a design like the BCR validation experiments (7 concentrations × 3 wells, with well-to-well overdispersion) and in 92% for the bundled benchmark design (8 concentrations × 6 wells, binomial). The Monte Carlo standard error is about 2.5 percentage points, so coverage is slightly below nominal. Results are in `benchmarks/bootstrap_coverage_summary.csv`.
 
 Count-based curve fitting can use total counts as fitting weights. Continuous motility and normalized XY responses are fitted without count weights. Normalized replicate observations are fitted as imported and are not clipped to 0–1.
 
@@ -77,7 +85,7 @@ When bootstrap IC50 samples are available for both test and reference groups, AR
 
 For count-based assays, ARStat performs Fisher exact tests at each dose after pooling replicate counts within each group. Raw p-values are accompanied by Benjamini-Hochberg and Bonferroni adjusted p-values.
 
-For motility and normalized replicate inputs, ARStat performs replicate-level Mann-Whitney U tests by default at each dose. These tests compare distributions at individual doses and are separate from the nonlinear curve fit.
+For motility and normalized replicate inputs, ARStat performs replicate-level Mann-Whitney U tests by default at each dose. These tests compare distributions at individual doses and are separate from the nonlinear curve fit. The output reports the number of replicates in each group and `exact_min_p`, the smallest two-sided P value an exact test can return for those sample sizes (2 / C(n1 + n2, n1); 0.10 for 3 versus 3 replicates). When values are tied, SciPy uses a normal approximation, which is unreliable at such small sample sizes.
 
 ## Limitations
 

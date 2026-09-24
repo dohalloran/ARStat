@@ -1,12 +1,29 @@
 # Changelog
 
+## v1.3.1 — audit fixes (fitted values unchanged)
+
+- **Sample-data provenance correction:** all three bundled `sample_data` examples are now labeled simulated/illustrative workflow demonstrations. Earlier documentation incorrectly described the bundled egg-hatch and larval-development example values as experimental; the empirical validation data remain the archived BCR experiments and published IDEA-ms motility data supplied with the manuscript supplement.
+Every fitted IC50, asymptote, Hill slope, and bootstrap interval is bit-for-bit identical to v1.3.0. Analyses reported with v1.3.0 therefore reproduce exactly with this release. The changes below fix crashes, labels, and reporting.
+
+- **Fixed normalized XY import with blank group or drug cells under pandas 2.x.** `astype(str)` turned blanks into a spurious group called `nan` or `None`, and the fallback-label warning never fired.
+- **Fixed crashes on pandas 3 when a group label is missing.** Building plot labels, and the error message for a group without a zero-dose motility control, raised `TypeError: sequence item 0: expected str instance, float found`. The app now also warns before a run when strain or drug cells are blank.
+- **Plot colours:** each group's points, fitted curve, and IC50 marker now share one colour. The IC50 lines were previously all drawn in the first palette colour.
+- **Mann-Whitney output** now includes `n_group_1`, `n_group_2`, and `exact_min_p`, the smallest P value an exact test can return (0.10 for 3 versus 3 replicates). The app explains this limit when it applies.
+- **Unsupported assay metadata:** the app warns when an `assay` column declares an assay ARStat does not support, such as a retired survival file.
+- **Generated methods text** now states the parameter bounds and zero-dose handling, and describes normalized XY input as normalized replicate responses rather than raw measurements.
+- **Statistical notes** in the app now flag estimates that sit on a parameter bound. When bootstrap intervals are requested, they also report the simulated coverage of those intervals.
+- **Added `scripts/simulate_bootstrap_coverage.py`** and `benchmarks/bootstrap_coverage_summary.csv`. Nominal 95% bootstrap IC50 intervals had about 91–92% coverage in simulated egg hatch designs with 3–6 wells per concentration. Dose-stratified resampling was also evaluated with the same simulated data sets and rejected, because its coverage was lower (86% and 90%). The README and `docs/statistical_methods.md` now describe the intervals as approximate and document the fitting bounds, optimizer, and zero-dose handling.
+- Added 6 regression tests; the suite now contains 44 tests (41 core + 3 Streamlit UI).
+
 ## v1.3.0 — validation safeguards and focused three-assay scope
 
 - Removed the survival/mortality assay from the ARStat user interface and backend assay presets.
 - Removed the illustrative survival sample dataset, survival template, simulated survival benchmark, validation outputs, and survival-specific tests.
 - Updated benchmark and validation scripts so they generate only egg hatch, larval development, and motility outputs.
 - Updated the README, user guide, statistical methods, validation plan, comparison documentation, and citation metadata to define ARStat around three supported workflows.
-- All three bundled example workflows now use real experimental data.
+- Bundled examples are workflow demonstrations; v1.3.1 corrected their provenance labeling so all three are described as simulated/illustrative. The motility example is generated from a 4PL model with IC50 = 20 and 80 nM, Hill slope 1.2, asymptotes 0.02 and 0.95, and zero-dose mean ≈ 100 units.
+- Deleted the retired survival files that were still present in the repository (`sample_data/survival_example.csv`, `templates/survival_template.csv`, and the survival outputs in `benchmarks/` and `validation_outputs/`).
+- Added a root `conftest.py`, so `pytest -q` works from the repository root without `PYTHONPATH=.`.
 
 
 - Verified the post-debug build independently and added two follow-up safeguards.
@@ -77,6 +94,20 @@
 - ARStat now calculates mean, standard deviation, and n from replicate values rather than requiring imported summary statistics.
 - Added a normalized XY replicate template and vendor-neutral documentation.
 
+## v1.0.0-rc3 plot display update
+
+- Added a traditional raw-outcome IC50 plot display option, so hatch rate, development rate, and survival can be shown as descending curves while retaining the existing inhibition/mortality-based IC50 fitting.
+- Added `survival_fraction` for survival assay display while preserving mortality/affected fraction as the fitted response.
+- Included plot-display mode in result staleness detection, so toggling plot style prompts users to rerun instead of showing stale figures.
+- Made plot captions conditional on the selected plot display mode.
+
+## v1.0.0-rc2 audit fixes
+
+- Corrected the larval development unit test so developed larvae are treated as the success count and undeveloped larvae as the failure count, matching the app presets and documentation.
+- Added test assertions that larval-development inhibition increases at high dose and that fitted top values exceed fitted bottom values for the standard example.
+- Improved fold-resistance bootstrap confidence intervals by using 10,000 ratio draws from stored IC50 bootstrap samples.
+- Added a fit message when a converged 4PL model has a fitted top below the fitted bottom, which can indicate swapped columns, incorrect assay settings, or poor data quality.
+
 ## v1.0.0-rc1
 
 Release-candidate package for public software testing and validation.
@@ -98,19 +129,3 @@ Release-candidate package for public software testing and validation.
 - Download buttons no longer trigger model refitting.
 - Session-state handling protects against missing stored results.
 - Deprecated Streamlit dataframe width arguments replaced.
-
-
-## v1.0.0-rc3 plot display update
-
-- Added a traditional raw-outcome IC50 plot display option, so hatch rate, development rate, and survival can be shown as descending curves while retaining the existing inhibition/mortality-based IC50 fitting.
-- Added `survival_fraction` for survival assay display while preserving mortality/affected fraction as the fitted response.
-- Included plot-display mode in result staleness detection, so toggling plot style prompts users to rerun instead of showing stale figures.
-- Made plot captions conditional on the selected plot display mode.
-
-
-## v1.0.0-rc2 audit fixes
-
-- Corrected the larval development unit test so developed larvae are treated as the success count and undeveloped larvae as the failure count, matching the app presets and documentation.
-- Added test assertions that larval-development inhibition increases at high dose and that fitted top values exceed fitted bottom values for the standard example.
-- Improved fold-resistance bootstrap confidence intervals by using 10,000 ratio draws from stored IC50 bootstrap samples.
-- Added a fit message when a converged 4PL model has a fitted top below the fitted bottom, which can indicate swapped columns, incorrect assay settings, or poor data quality.

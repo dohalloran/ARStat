@@ -11,6 +11,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from itertools import combinations
+from math import comb
 from typing import Iterable, Optional
 
 import numpy as np
@@ -236,6 +237,26 @@ def detect_declared_assays(df: pd.DataFrame) -> list[str]:
         if match:
             recognized.add(match)
     return sorted(recognized)
+
+
+def detect_unrecognized_assay_labels(df: pd.DataFrame) -> list[str]:
+    """Return values in an ``assay`` metadata column that ARStat does not support.
+
+    For example, a file may declare a retired or otherwise unsupported assay;
+    such files should not be run silently through another
+    assay's preset.
+    """
+    assay_col = next((c for c in df.columns if _canonical_column_name(c) == "assay"), None)
+    if assay_col is None:
+        return []
+    unknown: set[str] = set()
+    for value in df[assay_col].dropna():
+        key = str(value).strip().lower()
+        if not key:
+            continue
+        if not (ASSAY_VALUE_ALIASES.get(key) or ASSAY_VALUE_ALIASES.get(_canonical_column_name(key))):
+            unknown.add(str(value).strip())
+    return sorted(unknown)
 
 
 def infer_declared_assay(df: pd.DataFrame) -> Optional[str]:
@@ -516,7 +537,7 @@ def prepare_motility_response(
             control_means["control_mean_motility"] <= 0
         )
         if invalid_control.any():
-            bad = control_means.loc[invalid_control, group_cols].astype(str).agg(" | ".join, axis=1)
+            bad = control_means.loc[invalid_control, group_cols].apply(lambda col: col.map(str)).agg(" | ".join, axis=1)
             raise ValueError(
                 "Zero-dose mean motility must be positive for every fitted group. Invalid groups: "
                 + ", ".join(bad.tolist())
@@ -528,7 +549,7 @@ def prepare_motility_response(
             missing_groups = (
                 out.loc[missing_control, group_cols]
                 .drop_duplicates()
-                .astype(str)
+                .apply(lambda col: col.map(str))
                 .agg(" | ".join, axis=1)
                 .tolist()
             )
@@ -580,6 +601,20 @@ def prepare_motility_response(
     out["raw_outcome_percent"] = out["motility_fraction"] * 100
     return out, warnings
 
+
+
+def _label_column_with_fallback(values: pd.Series, fallback: str) -> tuple[pd.Series, int]:
+    """Return stripped text labels with blank or missing cells replaced by ``fallback``.
+
+    ``Series.astype(str)`` turns missing cells into the literal strings ``"nan"`` or
+    ``"None"`` under pandas 2.x, which would silently create a spurious group.
+    Missing values are therefore detected before conversion to text.
+    """
+    text = values.astype("string").str.strip()
+    missing = (text.isna() | text.eq("")).fillna(True).to_numpy(dtype=bool)
+    labels = text.astype(object).to_numpy(copy=True)
+    labels[missing] = fallback
+    return pd.Series(labels, index=values.index).astype(str), int(missing.sum())
 
 
 def prepare_normalized_xy_response(
@@ -725,25 +760,21 @@ def prepare_normalized_xy_response(
     effect_col = ASSAY_PRESETS[assay_name]["effect_fraction"]
 
     long = long.rename(columns={dose_col: "dose"})
+    fallback = str(dataset_label).strip() or "Dataset 1"
     if group_col:
-        long["strain"] = long[group_col].astype(str).str.strip().replace("", np.nan)
-        missing_group = long["strain"].isna()
-        if missing_group.any():
-            fallback = str(dataset_label).strip() or "Dataset 1"
-            long.loc[missing_group, "strain"] = fallback
-            warnings.append(f"{int(missing_group.sum())} rows had a missing group value and were assigned '{fallback}'.")
+        long["strain"], n_missing_group = _label_column_with_fallback(long[group_col], fallback)
+        if n_missing_group:
+            warnings.append(f"{n_missing_group} rows had a missing group value and were assigned '{fallback}'.")
     else:
-        long["strain"] = str(dataset_label).strip() or "Dataset 1"
+        long["strain"] = fallback
 
+    fallback_drug = str(drug_label).strip() or "Drug"
     if drug_col:
-        long["drug"] = long[drug_col].astype(str).str.strip().replace("", np.nan)
-        missing_drug = long["drug"].isna()
-        if missing_drug.any():
-            fallback_drug = str(drug_label).strip() or "Drug"
-            long.loc[missing_drug, "drug"] = fallback_drug
-            warnings.append(f"{int(missing_drug.sum())} rows had a missing drug value and were assigned '{fallback_drug}'.")
+        long["drug"], n_missing_drug = _label_column_with_fallback(long[drug_col], fallback_drug)
+        if n_missing_drug:
+            warnings.append(f"{n_missing_drug} rows had a missing drug value and were assigned '{fallback_drug}'.")
     else:
-        long["drug"] = str(drug_label).strip() or "Drug"
+        long["drug"] = fallback_drug
 
     long["unit"] = unit
     long["assay"] = assay_name
@@ -1175,5 +1206,22 @@ def pairwise_continuous_tests(
                 statistic, pvalue = mannwhitneyu(y1, y2, alternative="two-sided")
             row = {name: value for name, value in zip(stratify_cols + [dose_col], stratum)}
             row.update({"group_1": g1, "group_2": g2, "statistic": statistic, "p_value": pvalue})
+            row.update({"n_group_1": len(y1), "n_group_2": len(y2)})
+            if test != "t-test":
+                row["exact_min_p"] = mann_whitney_min_two_sided_p(len(y1), len(y2))
             rows.append(row)
     return add_p_value_adjustments(pd.DataFrame(rows))
+
+
+def mann_whitney_min_two_sided_p(n1: int, n2: int) -> float:
+    """Smallest two-sided P value an exact Mann-Whitney U test can return.
+
+    With complete separation of the two samples, the exact two-sided P value is
+    2 / C(n1 + n2, n1). For 3 versus 3 replicates this is 0.10, so an exact test
+    can never reach P < 0.05 regardless of the effect size. (When values are
+    tied, SciPy switches to a normal approximation, which can return smaller
+    P values but is unreliable at such small sample sizes.)
+    """
+    if n1 < 1 or n2 < 1:
+        return np.nan
+    return float(min(1.0, 2.0 / comb(n1 + n2, n1)))

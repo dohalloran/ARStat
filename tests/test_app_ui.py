@@ -52,3 +52,16 @@ def test_every_example_runs_and_fits_both_isolates():
         assert not at.error, [e.value for e in at.error]
         fitted = next(m for m in at.metric if m.label == "Groups fitted")
         assert fitted.value == "2/2", label
+
+
+def test_example_provenance_is_reported_accurately():
+    at = _app()
+    for label, expected in [
+        ("Egg hatch example", "simulated/illustrative egg-hatch"),
+        ("Larval development example", "simulated/illustrative larval-development"),
+        ("Motility example", "simulated motility data"),
+    ]:
+        at.selectbox(key="sample_label").select(label).run()
+        messages = " ".join(s.value for s in at.success)
+        assert expected in messages, (label, messages)
+        assert "real experimental" not in messages

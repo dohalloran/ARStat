@@ -1,0 +1,3 @@
+design,n_simulated,n_with_CI,nominal_level,coverage,coverage_mc_se,median_log10_CI_width,median_percent_error_IC50
+"BCR-like: 7 doses x 3 wells, overdispersed",120,120,0.95,0.9083333333333333,0.026341331415491148,0.11324449098032054,-2.189557983276258
+"Benchmark-like: 8 doses x 6 wells, binomial",120,120,0.95,0.9166666666666666,0.025230419617479103,0.11416095413439806,1.270706850497505

@@ -1,4 +1,4 @@
-# ARStat v1.3.0
+# ARStat v1.3.1
 
 [![Tests](https://github.com/dohalloran/ARStat/actions/workflows/tests.yml/badge.svg)](https://github.com/dohalloran/ARStat/actions/workflows/tests.yml)
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://arstat-jm7varr6fck8uajj4lgs6t.streamlit.app/)
@@ -17,13 +17,13 @@ The app starts from raw assay measurements or normalized XY replicate tables, ca
 
 ## Bundled sample data
 
-The `sample_data` folder includes real experimental datasets for all three supported workflows, using *Ancylostoma caninum* labels:
+The `sample_data` folder includes one **simulated/illustrative** example dataset for each supported workflow, using *Ancylostoma caninum* labels. These bundled examples demonstrate the input formats and analysis routes; they are not the empirical validation datasets used in the manuscript:
 
 | Assay | Isolates | Drug | Raw endpoint | Provenance |
 |---|---|---|---|---|
-| Egg hatch | WMD vs KGR | Thiabendazole | Eggs and L1 larvae | Real experimental data |
-| Larval development | WMD vs KGR | Ivermectin | Developed and undeveloped larvae | Real experimental data |
-| Motility | WMD vs KGR | Ivermectin | Continuous activity units | Real experimental data |
+| Egg hatch | WMD vs KGR | Thiabendazole | Eggs and L1 larvae | Simulated/illustrative count data |
+| Larval development | WMD vs KGR | Ivermectin | Developed and undeveloped larvae | Simulated/illustrative count data |
+| Motility | WMD vs KGR | Ivermectin | Continuous activity units | Simulated from a known 4PL model (IC50 20 and 80 nM); not experimental data |
 
 See `sample_data/DATA_DESCRIPTION.md` for the file-by-file description.
 
@@ -83,7 +83,7 @@ ARStat maps the selected experimental-group column to its backward-compatible in
 
 ## Reproducibility and validation
 
-Run the unit tests:
+Run the unit tests from the repository root (`conftest.py` puts the repository on the import path, so no `PYTHONPATH` setting is needed):
 
 ```bash
 pip install pytest
@@ -100,6 +100,12 @@ Run all bundled example datasets through the full workflow:
 
 ```bash
 python scripts/run_all_examples.py
+```
+
+Estimate the coverage of the bootstrap IC50 confidence intervals by simulation (about 10 minutes on 2 cores):
+
+```bash
+python scripts/simulate_bootstrap_coverage.py --n-sim 120
 ```
 
 Benchmark outputs are written to `benchmarks/`. Example validation outputs are written to `validation_outputs/`.
@@ -119,12 +125,14 @@ Benchmark outputs are written to `benchmarks/`. Example validation outputs are w
 
 ## Important statistical notes
 
-- **Zero-dose controls:** log-scaled plots cannot display x=0, so ARStat shows zero-dose controls at a symbolic left-edge tick labelled `0`. These observations remain included in calculations and summaries.
+- **Zero-dose controls:** zero-dose observations keep dose = 0 in all exported tables. Because log10(0) is undefined, the 4PL model evaluates them at one-tenth of the smallest positive dose in the fitted group, and plots show them at a symbolic left-edge tick labelled `0`.
+- **Model constraints:** the lower and upper asymptotes are constrained to 0–1 (on the inhibition scale), the Hill slope to 0.05–10, and log10(IC50) to within 3 decades of the tested positive doses. Check the IC50 table for estimates that sit on a bound.
+- **Bootstrap confidence intervals:** percentile intervals from resampling replicate rows within each fitted curve. They ignore plate, day, and experiment structure. In simulations (`scripts/simulate_bootstrap_coverage.py`; 120 data sets per design), nominal 95% intervals contained the true IC50 in 91–92% of data sets with 3–6 wells per concentration, so treat them as approximate.
 - **IC50 interpretation:** IC50 is the midpoint between the fitted lower and upper asymptotes of the four-parameter logistic model. If the fitted maximum response is below 100%, IC50 is not necessarily the dose giving 50% absolute response.
 - **Motility interpretation:** the reported value is a motility-inhibition IC50 under the selected activity definition, exposure time, parasite stage, and normalization. It should not be interpreted automatically as a lethal concentration.
 - **Pairwise tests:** pairwise dose-level p-values are exploratory. ARStat reports both raw and adjusted p-values.
 - **Count assays:** Fisher exact tests pool replicate counts at each dose and do not model replicate-to-replicate overdispersion.
-- **Continuous assays:** motility and normalized XY workflows use replicate-level Mann-Whitney U tests by default.
+- **Continuous assays:** motility and normalized XY workflows use replicate-level Mann-Whitney U tests by default. With 3 replicates per group an exact two-sided test cannot reach P < 0.05; the `exact_min_p` column reports this limit for each comparison.
 
 ## Required columns
 
@@ -143,7 +151,7 @@ Assay-specific raw columns:
 ```text
 app.py                         Streamlit app
 arstat_core.py                 Reusable analysis backend
-sample_data/                   Bundled real-data examples for all supported assays
+sample_data/                   Bundled simulated/illustrative example datasets for all three workflows
 templates/                     Blank CSV templates
 tests/                         Unit tests
 scripts/                       Benchmark and validation scripts

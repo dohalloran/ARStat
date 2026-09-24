@@ -504,7 +504,7 @@ def test_normalized_xy_templates_are_not_misclassified_as_raw_assays():
 
 def test_infer_declared_assay_from_metadata_column():
     assert infer_declared_assay(pd.DataFrame({"assay": ["egg_hatch", "egg_hatch"]})) == "Egg hatch"
-    assert infer_declared_assay(pd.DataFrame({"assay": ["mortality", "survival"]})) is None
+    assert infer_declared_assay(pd.DataFrame({"assay": ["legacy_assay", "unsupported_assay"]})) is None
     mixed = pd.DataFrame({"assay": ["egg_hatch", "motility"]})
     assert detect_declared_assays(mixed) == ["Egg hatch", "Motility"]
     assert infer_declared_assay(mixed) is None
@@ -609,3 +609,96 @@ def test_windows_excel_csv_with_micro_sign_is_read_not_rejected():
     else:
         raise AssertionError("Binary garbage should not parse as a CSV.")
 
+
+
+# ---------------------------------------------------------------------------
+# v1.3.1 regression tests
+# ---------------------------------------------------------------------------
+
+def test_normalized_xy_missing_group_and_drug_cells_use_fallback_labels():
+    # Under pandas 2.x, Series.astype(str) turned blank cells into the literal
+    # group "nan"/"None", silently creating an extra curve.
+    wide = pd.DataFrame(
+        {
+            "Group": ["WMD"] * 4 + [None] * 4,
+            "Drug": ["TBZ"] * 4 + [np.nan, "TBZ", "  ", "TBZ"],
+            "Dose": [0, 1, 10, 100] * 2,
+            "Rep1": [100, 90, 40, 5, 100, 95, 60, 10],
+            "Rep2": [99, 88, 42, 6, 98, 93, 58, 12],
+        }
+    )
+    prepared, warnings = prepare_normalized_xy_response(
+        wide,
+        dose_col="Dose",
+        replicate_cols=["Rep1", "Rep2"],
+        assay_name="Egg hatch",
+        group_col="Group",
+        drug_col="Drug",
+        dataset_label="Unlabelled",
+        drug_label="TBZ",
+        value_scale="percent",
+    )
+    assert set(prepared["strain"]) == {"WMD", "Unlabelled"}
+    assert set(prepared["drug"]) == {"TBZ"}
+    assert not prepared["strain"].isin(["nan", "None", "<NA>"]).any()
+    assert any("8 rows had a missing group value" in w for w in warnings)
+    assert any("4 rows had a missing drug value" in w for w in warnings)
+
+
+
+
+def test_bootstrap_ci_is_reported_and_brackets_ic50():
+    df = pd.read_csv("sample_data/egg_hatch_example.csv")
+    prepared, _ = calculate_count_response(df, "L1", "eggs", "Egg hatch")
+    summary, _ = fit_dose_response(prepared, ["drug", "strain"], n_boot=60)
+    assert summary["IC50_CI_low"].notna().all()
+    assert (summary["IC50_CI_low"] <= summary["IC50"]).all()
+    assert (summary["IC50"] <= summary["IC50_CI_high"]).all()
+
+
+
+
+def test_mann_whitney_small_sample_columns():
+    from arstat_core import mann_whitney_min_two_sided_p
+
+    assert np.isclose(mann_whitney_min_two_sided_p(3, 3), 0.10)
+    assert np.isclose(mann_whitney_min_two_sided_p(4, 4), 2 / 70)
+    df = pd.DataFrame(
+        {
+            "strain": ["A"] * 3 + ["B"] * 3,
+            "dose": [1] * 6,
+            "response_fraction": [0.1, 0.2, 0.3, 0.7, 0.8, 0.9],
+        }
+    )
+    tests = pairwise_continuous_tests(df, comparison_col="strain", dose_col="dose")
+    assert tests.loc[0, "n_group_1"] == 3 and tests.loc[0, "n_group_2"] == 3
+    assert np.isclose(tests.loc[0, "exact_min_p"], 0.10)
+    assert np.isclose(tests.loc[0, "p_value"], 0.10)
+
+
+def test_unsupported_assay_metadata_is_reported():
+    from arstat_core import detect_unrecognized_assay_labels
+
+    legacy = pd.DataFrame({"assay": ["legacy_assay", "legacy_assay"], "alive": [20, 3], "dead": [1, 18]})
+    assert detect_unrecognized_assay_labels(legacy) == ["legacy_assay"]
+    for filename in ["egg_hatch_example.csv", "larval_development_example.csv", "motility_example.csv"]:
+        assert detect_unrecognized_assay_labels(pd.read_csv(f"sample_data/{filename}")) == []
+
+
+def test_missing_motility_control_error_names_groups_even_with_blank_labels():
+    # A blank strain label used to raise TypeError ("expected str instance, float found")
+    # under pandas 3 while the helpful ValueError message was being built.
+    df = pd.DataFrame(
+        {
+            "strain": ["WT"] * 4 + [np.nan] * 3,
+            "drug": ["IVM"] * 7,
+            "dose": [0, 1, 10, 100, 1, 10, 100],
+            "motility": [100, 90, 50, 10, 95, 60, 20],
+        }
+    )
+    try:
+        prepare_motility_response(df, "dose", "motility", ["drug", "strain"], value_scale="raw")
+    except ValueError as exc:
+        assert "Missing groups" in str(exc) and "nan" in str(exc)
+    else:
+        raise AssertionError("A group without a zero-dose control should raise ValueError.")
